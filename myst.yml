@@ -1,15 +1,15 @@
 # See docs at: https://mystmd.org/guide/frontmatter
 version: 1
 project:
-  title: 'Demystifying MyST: The most powerful preprint authoring tool'
-  subtitle: A template for reproducible preprints
+  title: 'Strong Coupling of Retinal Thickness and Optic Nerve Myelin in Vivo'
+  subtitle:
   thebe:
     binder:
       url: https://terrarium.evidencepub.io
       repo: neurolibre/mystical-article # Production will override this.
       ref: HEAD # Production will override this.
   authors:
-    - name: Agah Karakuzu
+    - name: Hugo Albert Plante
       orcid: 0000-0001-7283-271X
       affiliations: polymtl; mhi
       corresponding: true
@@ -71,8 +71,9 @@ project:
   bibliography:
     - paper.bib
   resources:
-    - content/figure1.ipynb
-    - content/figure2.md
+    - content/figure_1.ipynb
+    - content/figure_2.ipynb
+    - content/figure_3.ipynb
 site:
   template: article-theme # Or book-theme
   options:

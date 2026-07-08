@@ -2,4 +2,5 @@ format: jb-book
 root: paper.md
 chapters:
   - file: content/figure_1.ipynb
-  - file: content/figure_2.md
+  - file: content/figure_2.ipynb
+  - file: content/figure_3.ipynb

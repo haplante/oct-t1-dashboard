@@ -5,191 +5,74 @@ numbering:
     template: Fig. %s
 ---
 
-## Articles with code vs articles from code
+## Dashboard
 
-One of the main advantages of articles written in MyST Markdown is the fact that you can bundle several types of outputs (such as figures, tables, equations, etc.) from your Jupyter Notebooks in a single document. This is made possible by the use of `directives`, which are special commands that instruct MyST Markdown to include the content of a notebook, a file, or a chunk of text in your document or cite references. You can use DOIs, [](https://doi.org/10.31219/osf.io/h89js) or a local bibliography file (`paper.bib`) for citations @Boudreau2023.
+<div style="width:100%; aspect-ratio:1400/840; overflow:hidden;">
+<div style="position:relative; width:1400px; height:840px; transform:scale(0.514286); transform-origin:top left;">
+<iframe src="https://oct-t1-standard-correlation.netlify.app/" style="width:100%; height:100%; border:0;"></iframe>
+</div>
+</div>
 
+## Introduction
 
-:::{figure} static/banner.jpg
+The optic nerve plays a central role in visual processing by transmitting neural signals from retinal ganglion cells to the lateral geniculate nucleus and onward to the visual cortex. Efficient conduction along this pathway depends on densely packed, highly organized, and heavily myelinated axons (Waxman, 1980). Owing to its small diameter, high myelin content, and functional specialization, the optic nerve represents a compelling model for studying the impact of white-matter integrity in vivo (Hoch et al., 2017).
 
-A funny take on the difference between articles with code and articles from code.
-:::
+Traditional clinical assessment of optic nerve integrity relies on fundus imaging and, increasingly, optical coherence tomography (OCT) (Shin and Costello 2024). OCT enables quantitative measurement of retinal nerve fiber layer (RNFL) and ganglion cell complex (GCC/IPL) thickness, which serve as established surrogate biomarkers of retinal ganglion cell axonal density and integrity (Sakata et al. 2009; Galetta et al. 2011; Petzold et al. 2010; Shin and Costello 2024). However, retinal ganglion cell axons are unmyelinated within the eye and only become myelinated posterior to the lamina cribrosa (Bristow et al., 2002). As a result, OCT measurements, which are limited to the retina and optic nerve head, provide information about retinal axonal structure but not about myelin within the intraorbital optic nerve. Ideally, biomarkers of optic nerve integrity should capture both axonal and myelin content, as each contributes to visual function and may be differentially affected across neurological and ophthalmic diseases. 
 
-Let's see how directives work with a simple example by rendering a video from an external source:
+Among OCT-derived measurements, the macular ganglion cell complex (GCC) within the central 1–3 mm annulus and the global peripapillary retinal nerve fiber layer (RNFL) average are of particular interest. Histological studies have shown that retinal ganglion cell axon density peaks near 1 mm from the foveal center and remains highest within the parafoveal region, making GCC 1–3 mm a sensitive marker of ganglion cell integrity (Curcio and Allen, 1990). The global RNFL average complements this measure by capturing the thickness of axons from the entire retina as they converge to form the optic nerve, providing a representative measure of overall retinal axonal content. 
 
-:::{iframe} https://cdn.curvenote.com/0191bd75-1494-72f5-b48a-a0aaad296e4c/public/links-8237f1bb937ea247c2875ad14e560512.mp4
-:label: figvid
-:width: 100%
+In contrast, magnetic resonance imaging (MRI) can assess the optic nerve along its entire length and is used routinely in clinical practice to detect gross structural abnormalities, including inflammation, atrophy, and focal lesions (Gala, 2015; Hoch et al., 2017; Miller et al., 1988). However, standard T1- and T2-weighted sequences remain largely qualitative and lack sensitivity to subtle microstructural variation, such as altered myelin content in the absence of clinically overt signal abnormalities (Filippi et al., 2019).
 
-Video reused from [mystmd.org](https://mystmd.org) (CC-BY-4.0, [source](https://mystmd.org/guide)).
-:::
+Assessing such microstructural variation within the optic nerve is further complicated by the nerve’s small diameter, curved trajectory, and passage through anatomically distinct environments along its length. The nerve traverses orbital fat within the intraorbital segment, bone within the optic canal, and brain parenchyma intracranially (Xena-Bosch et al., 2025). This adjacent orbital fat further generates a chemical-shift artifact at the fat–nerve interface that displaces signal and blurs the nerve boundary (Varma et al., 2020). In addition, the transition between these distinct anatomical environments, particularly near the paranasal sinuses, introduces susceptibility-related distortion that complicates segmentation and limits comparability of measurements across segments (van Elst et al. 2023; Varma et al. 2020). Involuntary eye movements further contribute motion artifacts. Beyond these sources of image degradation, cerebrospinal fluid (CSF) within the optic nerve sheath constitutes an immediately adjacent long-T1, high-signal compartment that, at typical clinical resolutions, produces substantial partial-volume contamination and can inflate and bias quantitative estimates (Chow and Paley, 2021; Varma et al., 2020). Together, these factors limit the robustness and reproducibility of quantitative MRI techniques applied to the optic nerve. 
 
-Yet, the main purpose of this article is to not to showcase all the [authoring tools](https://mystmd.org/guide/typography) available in MyST Markdown, but rather to provide a simple template to get you started with your own article to publish on NeuroLibre.
+To address these limitations, a range of quantitative MRI techniques has been explored to probe optic nerve microstructure in vivo. Diffusion-weighted imaging has been the most widely applied approach, offering indirect sensitivity to axonal organization and demyelination through metrics such as fractional anisotropy and diffusivity (Hong et al. 2022; Moon et al. 2021; Smith et al. 2011; Trip et al. 2006; Miller et al. 2019; Haykal et al. 2020). Other approaches, including magnetization transfer imaging (Hickman et al., 2004; Trip et al., 2007), myelin water imaging (Dortch et al., 2013), and T2 relaxometry (Hoch et al., 2017), have also been investigated to improve sensitivity to macromolecular and myelin-related tissue properties. Each of these techniques, however, is compromised to varying degrees by the anatomical constraints described above, and none has been established as a robust, routine measure of optic nerve microstructure. As discussed below, these challenges also apply, to some extent, to the T1 mapping approach used in the present study. 
 
+T1 relaxometry offers a quantitative approach for probing optic nerve microstructure by providing voxelwise measurements of intrinsic tissue properties that are less dependent on scanner-specific image contrast than conventional weighted MRI (Weiskopf et al., 2021). In this study, T1 was quantified using MP2RAGE (Magnetization Prepared 2 Rapid Acquisition Gradient Echoes), which provides accurate T1 estimates while reducing sensitivity to B1 inhomogeneity and receive-coil bias (Marques et al., 2010). These properties make MP2RAGE particularly well suited for imaging anatomically challenging structures such as the intraorbital optic nerve. In healthy adult white matter at 3 T, MP2RAGE-derived T1 values are approximately 810 ± 30 ms, providing a general reference for interpreting MP2RAGE-derived optic nerve measurements, while acknowledging the previously described factors that limit measurement accuracy and comparability in this structure (Marques et al., 2010).
 
-:::{seealso}
-You can refer to the [MyST Guide](https://mystmd.org/guide/typography) to see all the cool stuff you can do with MyST Markdown, such as creating a `mermaid` diagram like this:
+Quantitative T1 has been widely investigated as a surrogate marker of myelin content, with systematic reviews and meta-analyses identifying T1/R1 among the MRI metrics that consistently correlate with myelin across experimental models and imaging studies (Mancini et al., 2020; van der Weijden et al., 2021). This interpretation is also supported by the macromolecular tissue volume (MTV) framework proposed by Mezer et al., which demonstrated that longitudinal relaxation rate (R1 = 1/T1) scales with the non-water fraction of a voxel (Mezer et al., 2013). In white matter, this macromolecular compartment is dominated by myelin, which constitutes approximately 50-60% of the tissue dry weight and represents the largest single macromolecular component (Duval et al., 2016; Rasband and Macklin, 2012). Consistent with this relationship between myelin content and T1 relaxation, demyelinating white matter lesions in multiple sclerosis exhibit prolonged quantitative T1 values, supporting the use of T1 as a practical proxy marker of myelin integrity (Schmierer et al., 2004; van Walderveen et al., 2003; Vrenken et al., 2006). 
 
-```{mermaid}
-flowchart LR
-  A[Jupyter Notebook] --> C
-  B[MyST Markdown] --> C
-  C(mystmd) --> D{AST}
-  D <--> E[LaTeX]
-  E --> F[PDF]
-  D --> G[Word]
-  D --> H[React]
-  D --> I[HTML]
-  D <--> J[JATS]
-```
+Despite these advances, few studies have directly related OCT-derived measures of retinal structure to quantitative MRI markers of optic nerve microstructure, and in vivo validation of any candidate MRI myelin marker against an independent structural measure remains scarce (Trip et al. 2006; Trip et al. 2007; Hickman et al. 2004; Dortch et al. 2013; Mirmosayyeb et al. 2025). Here, we used MP2RAGE-derived T1 mapping to quantify the intraorbital optic nerve and examined its relationship with OCT-derived retinal thickness measurements in the macula and around the optic disc. We hypothesized that intraorbital optic nerve T1 would show region-specific associations with OCT measurements, supporting the biological coupling between retinal axonal architecture and optic nerve microstructure, and highlighting the potential of T1 mapping as a non-invasive bridge between retinal and neural measures of white-matter integrity.
 
-Or you can see how hover-over links work for [wikipedia sources](https://en.wikipedia.org/wiki/Wikipedia#:~:text=Wikipedia%20is%20a%20free%20content,and%20the%20wiki%20software%20MediaWiki.) and cross references figures (e.g., [Fig. %sf](#fig1), [Figure %sf](#fig2), [Video %sf](#figvid)).
-:::
+## Results
 
-Typically, when publishing an article following the traditional route, you would write your article in a word processor where you need to deal with the generation of figures, tables etc. elsewhere, and then bring them together in the final document manually. This eventually leads to a cluttered set of files, code, dependencies, and even data that are hard to manage in the long run. If you've been publishing articles for a while, you probably know what we are talking about:
-
-> Where is the endnote reference folder I used for this article?
-
-> What is the name of the script I used to generate the second figure? This script has the title `fig_2_working.py` and is in the  `karakuzu_et_al_2016_mrm` folder, but it does not seem to be the one that generated the figure...
-
-> I cannot create the same runtime environment that I used for this analysis in my current project because `python 3.8` is not available in the current distribution of Anaconda... It is so tricky to get this running on my new computer...
-
-MyST Markdown offers a powerful solution to this by allowing you to create an article ✨from code✨, linking all the pieces of your executable and narrative content together in the body of this one document: your canvas.
-
-:::{figure} https://cdn.curvenote.com/0191bd75-1494-72f5-b48a-a0aaad296e4c/public/reuse-jupyter-output-2e6bfa91772dbb6bbc022dc6aee80d2b.webp
-:label: fig0
-
-An article with two figures created in Jupyter Notebooks. Each figure can be labeled directly in the notebook and reused in any other page directly.
-
-Figure reused from [mystmd.org](https://mystmd.org) (CC-BY-4.0, [source](https://mystmd.org/guide/reuse-jupyter-outputs#reuse-jupyter-outputs)).
-:::
-
-
-
-For example, the following figure is the output of the `content/fig_1.ipynb` notebook:
+MP2RAGE-derived T1 values were successfully quantified along the first 15 mm of the intraorbital optic nerve in all participants. T1 measurements were extracted using a skeleton-based segmentation, in which a single voxel located at the center of the optic nerve was sampled on each coronal slice, as illustrated in Figure 4. Visual inspection of the resulting longitudinal profiles within the interactive dashboard  demonstrated smooth T1 variation along the nerve, without abrupt transitions or discontinuities (Figure 1). Mean T1 values progressively decreased from the anterior (0–5 mm, 1005 ± 150 ms) to the middle (5–10 mm, 874 ± 136 ms) and posterior (10–15 mm, 855 ± 120 ms) segments, yielding an overall mean T1 of 911 ± 129 ms across the full 0–15 mm intraorbital segment. Left and right optic nerves exhibited visually similar profiles. The dashboard allows individual participants to be included or excluded, enabling visual assessment of the influence of each subject on the T1 profiles and subsequent OCT–T1 associations. 
 
 :::{figure} #fig1cell
 :label: fig1
-
-An example of a figure generated from a Jupyter Notebook that lives in the `content` folder of this repository. Check `content/figure_1.ipynb` to see how this figure was generated and where the label `#fig1cell` is defined.
+:width: 100%
+T₁ profile along the optic nerve (OD/OS group means ± SD, faint per-eye traces behind).
 :::
 
-Here is another figure generated from another notebook:
+To quantify these observations, a linear mixed-effects model was fitted with position, side, and their interaction as fixed effects and subject as a random intercept. T1 decreased significantly with increasing distance from the optic disc (β = −14 ms/mm, p < 0.001). Neither the effect of side (β = 3 ms, p = 0.88) nor the side-by-position interaction (p = 0.60) reached statistical significance, indicating comparable longitudinal T1 profiles in both optic nerves. 
+
+We next examined the relationship between intraorbital optic nerve T1 and OCT-derived retinal thickness measurements. We first focused on the GCC All (1–3 mm) average and the global RNFL average because they provide global summary measures of the macular ganglion cell complex and the peripapillary retinal nerve fiber layer, respectively. Scatter plots in Figure 2 display ordinary least-squares regression, and all reported associations remained significant following FDR correction.  In the dashboard, these regression panels can be updated interactively by selecting different OCT sectors, T1 segments, or displayed statistics. 
 
 :::{figure} #fig2cell
 :label: fig2
-
-An example of a figure generated from a Jupyter Notebook that lives in the `content` folder of this repository.  Check `content/figure_2.md` to see how this figure was generated and where the label `#fig2cell` is defined.
-:::
-
-Both interactive, cool right! All your assets are centralized in this one document, which ideally lives in a GitHub repository. You may forget what you did, but your commit history will be there to remind you.
-
-## NeuroLibre and MyST Markdown
-
-NeuroLibre is a reproducible preprint publisher that makes it a seamless experience to publish preprints written in MyST Markdown, and commits to the long term preservation of the content, runtime, data, and the functionality of the code.
-
-:::{seealso}
-You can refer to [this blogpost](https://conp.ca/about-neurolibre/#:~:text=NeuroLibre%20is%20a%20platform%20for,articles%2C%20tutorials%2C%20and%20reports) for more information about NeuroLibre.
-:::
-
-### Data
-
-Unless your preprint does not include any output that requires computational resources, you typically need to provide a set of inputs to supplement the generation of the assets in your article. The type and size of the data can vary greatly from one article to another, from a `50KB` excel spreadsheet to a `2GB` neuroimaging dataset of brain images.
-
-The only requirement is that the data must be publicly available to be accessed by NeuroLibre. To specify your data dependencies, you can provide a `binder/data_requirement.json` file in the root of your repository, with the following structure:
-
-```json
-{
-  { "src": "https://drive.google.com/uc?id=1hOohYO0ifFD-sKN_KPPXOgdQpNQaThiJ",
-  "dst": "../data",
-  "projectName": "neurolibre-demo-dataset"
-  }
-}
-```
-
-:::{note}
-The above configuration specifies that the data will be downloaded from Google Drive and placed in and saved in a `data/neurolibre-demo-dataset` at the root of your repository. The `dst` field indicates `../data` as the root of the repository is one directory up from the `binder` directory where the `data_requirement.json` file is located.
-
-Even when the `dst` field is specified differently, NeuroLibre will always mount the data in the `data` folder at the root of your repository. We recommend you to follow the same convention while working locally and to remember to `.gitignore` the `data` folder!
-:::
-
-:::{seealso}
-You can refer to [this documentation](https://docs.neurolibre.org/en/latest/STRUCTURE.html#the-binder-folder-data) for more information about the `binder/data_requirement.json` file and the available options to specify your data dependencies.
-:::
-
-#### How can I get NeuroLibre to cache my data dependencies? 
-
-You can use [this issue template](https://github.com/neurolibre/info/issues/new?assignees=agahkarakuzu&labels=DOWNLOAD&projects=&template=data_cache.md&title=) to request the caching of your data dependencies.
-
-### Code 
-
-NeuroLibre follows the [reproducible runtime environment specification (REES)](https://repo2docker.readthedocs.io/en/latest/specification.html) to define a runtime environment for your preprint. Any programming language supported by Project Jupyter (e.g. python, R, julia, etc.) can be used to create your executable content, where you place necessary [BinderHub configuration files](https://mybinder.readthedocs.io/en/latest/using/config_files.html#config-files) in the `binder` folder.
-
-#### How much computational resources are available and for how long my notebooks can run to generate the outputs?
-
-For each preprint, we guarantee a minimum of 1 CPU core and 4 GB of RAM (8GB maximum), and a maximum of 1 hours of runtime to execute all the notebooks in the `content` folder.
-
-> Do you really want someone to run your code for 1 hour? Probably not.
-
-Even though long-running code cells may be of interest to interactive tutorials, a reader who is interested in reproducing your Figure would be less likely to wait for more than a few minutes for the outputs to be generated. This is why we encourage you to create notebooks that can be run in the "attention span" of a reader.
-
-### Preview your preprint
-
-#### Locally
-
-It is always a good practice to be able to build your MyST article locally before publishing it to NeuroLibre. If you install MyST as described [here](https://mystmd.org/guide/installing), in a virtual environment that has all your code dependencies installed, you can build your myst article:
-
-```bash
-cd path/to/your/repo
-myst build --execute --html
-```
-
-:::{note}
-NeuroLibre also supports Jupyter Book for publishing preprints. You can refer to [this documentation](https://jupyterbook.org/en/stable/intro.html) to find out more about it. However, as of late 2024, MyST is our recommended route for writing preprints.
-:::
-
-#### Roboneuro preview service
-
-If you have a data dependency and have NeuroLibre cached it for you, you can start using the Roboneuro preview service to build your preprint: https://robo.neurolibre.org
-
-#### Technical screening
-
-Once you submit your preprint to NeuroLibre, our team will perform a technical screening to ensure that your preprint can be built successfully. This is to make sure that your preprint is in line with our guidelines and to avoid any issues that may arise during the build process.
-
-You can visit our technical screening repository [neurolibre/neurolibre-reviews](https://github.com/neurolibre/neurolibre-reviews/issues) to see examples of this process.
-
-### After your preprint is published
-
-We archive all the reproducibility assets of your preprint on Zenodo and link those objects to your reproducible preprint that is assigned a DOI and indexed by [Crossref](https://www.crossref.org/) (also by Google Scholar, Researchgate, and other platforms that use Crossref metadata).
-
-Your preprint can be found, cited, and more importantly, reproduced by any interested reader, and that includes you (probably a few years after you published your preprint)!
-
-### Is the idea of wanting to publish a dashboard with your preprint too crazy?
-
-Absolutely not! We encourage you to publish your dashboard alongside your preprint to showcase your results in the best way possible.
-
-:::: {admonition} An interactive dashboard developed with R Shiny
-:class: tip
-:::{iframe} https://shinybrain.db.neurolibre.org
 :width: 100%
-:label: intdashboard
-:align: center
-
-MRShiny Brain interactive dashboard at [https://shinybrain.db.neurolibre.org](https://shinybrain.db.neurolibre.org)
+Figure 2
 :::
-::::
 
-:::: {admonition} An award-winning dashboard developed using Plotly Dash
-:class: tip
-:::{iframe} https://rrsg2020.db.neurolibre.org/
+For the GCC All (1–3 mm) average, greater retinal thickness was associated with lower optic nerve T1 across the full 0–15 mm intraorbital segment (R² = 0.81, pFDR < 0.05). A similar negative relationship was observed for the global RNFL average, although the association was weaker than for the macular GCC measurement (R² = 0.72, pFDR < 0.05). 
+
+To determine whether these relationships depended on the location along the optic nerve, analyses were repeated separately for the anterior (0–5 mm), middle (5–10 mm), and posterior (10–15 mm) segments. The GCC All (1–3 mm) average exhibited significant negative associations in the anterior (0–5 mm: R² = 0.60, pFDR < 0.05), middle (5–10 mm: R² = 0.74, pFDR < 0.05), and posterior (10–15 mm: R² = 0.83, pFDR < 0.05) segments. The global RNFL average showed a similar pattern, with significant negative associations in the anterior (R² = 0.47, pFDR < 0.05), middle (R² = 0.66, pFDR < 0.05), and posterior (R² = 0.78, pFDR < 0.05) segments.
+
+For both GCC All (1–3 mm) and global RNFL average, the proportion of explained variance increased toward the posterior optic nerve, while regression slopes remained comparable across segments,  with overlapping 95% confidence intervals. Together, these findings indicate that the relationship between retinal thickness and optic nerve T1 is present throughout the first 15 mm of the intraorbital optic nerve and is consistently stronger for macular GCC than for global RNFL measurements. 
+
+Although the GCC All (1–3 mm) average and global RNFL average provided the strongest overall associations, these summary measures do not indicate whether the relationship is uniformly distributed across the retina. We therefore examined the association between optic nerve T1 and each individual retinal sector.
+
+:::{figure} #fig3cell
+:label: fig3
 :width: 100%
-:label: intdashboard2
-:align: center
-
-ISMRM RRSG 2020 interactive dashboard at [https://rrsg2020.db.neurolibre.org/](https://rrsg2020.db.neurolibre.org/)
+Figure 3
 :::
-::::
 
-These dashboards [](#intdashboard) and [](#intdashboard2) are embedded in their respective NeuroLibre preprints! If you are interested in publishing your own dashboard with NeuroLibre, please open an issue using [this template](https://github.com/neurolibre/info/issues/new?assignees=agahkarakuzu&labels=dashboard&projects=&template=new_dashboard.md&title=%5BNEW+DASHBOARD%5D).
+Within the macula, the GCC All (1–3 mm) average exhibited a strong association with optic nerve T1 (R² = 0.81, pFDR < 0.05). Among the individual sectors, the strongest association was observed in the nasal sector of the 1–3 mm annulus (R² = 0.82, pFDR < 0.05). Significant negative associations were also observed in the central 1 mm region (R² = 0.52, pFDR < 0.05) and in the superior, inferior, and nasal sectors of the outer 3–6 mm annulus (R² = 0.55–0.70, pFDR < 0.05). Although weaker, the temporal outer sector also reached statistical significance (R² = 0.42, pFDR < 0.05). Overall, the spatial distribution of association strengths demonstrated a clear regional pattern, with the strongest relationships localized to the parafoveal GCC, particularly within the nasal 1–3 mm annulus.
 
-If you have any questions or need further assistance, please reach out to us at `info@neurolibre.org`.
+For peripapillary RNFL measurements, the global average thickness demonstrated a significant association with intraorbital optic nerve T1 (R² = 0.72, pFDR < 0.05). Among the individual Garway–Heath sectors, the inferior-temporal and nasal-superior regions exhibited the strongest associations (R² = 0.66-0.67, pFDR < 0.05), while all significant relationships remained negative. Overall, sector-wise associations were consistently stronger in the macula than around the optic disc.
+
+Finally, we examined influential observations for the GCC All (1–3 mm) relationship. Inspection of studentized residuals identified one eye (right eye of participant 0610, clinically classified as healthy at the time of imaging) that deviated substantially from the fitted relationship. This eye was the only observation identified as both an outlier and an influential observation for the GCC All (1–3 mm) analysis of the full 0–15 mm (studentized residual = 3.49) and anterior 0–5 mm (studentized residual = 5.48) optic nerve segments. Smaller but statistically significant deviations were also observed in the middle (studentized residual = −2.36) and posterior (studentized residual = −2.30) segments. Despite these deviations, OCT thickness itself did not differ significantly from the cohort distribution (p > 0.5), indicating that the outlying behavior originated primarily from elevated T1 values rather than abnormal retinal thickness.
+
+A second participant, shown in the penultimate column of Figure 4, exhibited lower-than-average GCC All (1–3 mm) thickness together with higher-than-average optic nerve T1 in both eyes (p < 0.05 versus the cohort for both measures). However, both eyes remained closely aligned with the fitted regression (|studentized residual| ≤ 1.05), indicating that the increased T1 was proportional to the reduction in retinal thickness rather than representing an independent deviation from the overall relationship. This participant was identified as influential (Cook’s distance) for the anterior (0–5 mm) analysis but was not classified as an outlier.
+
+Because the strongest sector-wise association was observed in the nasal 1–3 mm annulus, we further evaluated the effect of the influential observation on this regression. In this sector, the right eye of participant 0610 was the only observation identified as an outlier and/or influential for the 0–15 mm T1 analysis. Removing this observation increased the coefficient of determination from R² = 0.82 to R² = 0.89 while preserving the negative relationship, indicating that the regional association was strengthened but not driven by this single observation.
