@@ -311,6 +311,15 @@ def build_fig2(view):
             fig.add_scatter(x=xs, y=r["b0"] + r["b1"] * xs, mode="lines", legend=leg,
                 legendgroup=grp, visible=vis, row=1, col=col, line=dict(color=c, width=2),
                 hoverinfo="skip", name=f"{lbl}  ({stat_lbl(stat)}={fmt2(stat_val(r, stat))}){star}")
+        # grey dotted reference: default sector at the selected band (only when a
+        # non-default sector is selected) — lets you compare against the baseline.
+        ref = panel.get("ref")
+        if ref:
+            rx = np.array([min(ref["x"]), max(ref["x"])])
+            fig.add_scatter(x=rx, y=ref["b0"] + ref["b1"] * rx, mode="lines", legend=leg,
+                row=1, col=col, line=dict(color="#999", width=1.5, dash="dot"),
+                hoverinfo="skip",
+                name=f"{BAND_LABEL[sel_band]} {sector_name(panel['default_sector'])}")
         fig.update_xaxes(title=dict(text=xlab, standoff=5), row=1, col=col, **AX)
         fig.update_yaxes(title=dict(text=y_title), row=1, col=col, **AX)
 
@@ -411,7 +420,13 @@ def resolve_view(exclude=(), stat="R2m", band="T1_mean_015",
     for key, sector in (("mac", params["mac"]), ("disc", params["disc"])):
         fits = [fit(excluded, sector, b, params["mode"]) for b in T1_COLS_ORDER]
         pf = bh_fdr([f["p"] if f else float("nan") for f in fits])
+        # reference: the DEFAULT sector's fit at the selected band, drawn as a grey
+        # dotted line when a non-default sector is selected (mirrors index.html).
+        default_sector = DEF_MAC if key == "mac" else DEF_DISC
+        ref = (fit(excluded, default_sector, params["band"], params["mode"])
+               if sector != default_sector else None)
         panel_fits[key] = {"sector": sector,
+                           "default_sector": default_sector, "ref": ref,
                            "fits": {b: f for b, f in zip(T1_COLS_ORDER, fits)},
                            "pf": {b: pf[i] for i, b in enumerate(T1_COLS_ORDER)}}
 
