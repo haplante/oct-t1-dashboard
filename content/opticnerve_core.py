@@ -412,12 +412,15 @@ def resolve_view(exclude=(), stat="R2m", band="T1_mean_015",
                            "fits": {b: f for b, f in zip(T1_COLS_ORDER, fits)},
                            "pf": {b: pf[i] for i, b in enumerate(T1_COLS_ORDER)}}
 
-    # averages table needs FDR per family per band
+    # averages table needs FDR per family per band (and the fits themselves, for
+    # the dashboard's avg table to read without calling fit() directly)
     avg_pf = {}
+    avg_fits = {}
     for b, _, _ in T1_BANDS:
-        _, m_pf = fit_family(excluded, MAC_METRICS, b, params["mode"])
-        _, d_pf = fit_family(excluded, DISC_METRICS, b, params["mode"])
+        m_fits, m_pf = fit_family(excluded, MAC_METRICS, b, params["mode"])
+        d_fits, d_pf = fit_family(excluded, DISC_METRICS, b, params["mode"])
         avg_pf[b] = {"mac": m_pf, "disc": d_pf}
+        avg_fits[b] = {"mac": m_fits, "disc": d_fits}
 
     return {
         "params": params, "excluded": excluded,
@@ -426,5 +429,5 @@ def resolve_view(exclude=(), stat="R2m", band="T1_mean_015",
         "mac": params["mac"], "disc": params["disc"],
         "mac_fits": mac_fits, "mac_pf": mac_pf,
         "disc_fits": disc_fits, "disc_pf": disc_pf,
-        "panel_fits": panel_fits, "avg_pf": avg_pf,
+        "panel_fits": panel_fits, "avg_pf": avg_pf, "avg_fits": avg_fits,
     }

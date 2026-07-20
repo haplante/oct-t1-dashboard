@@ -49,3 +49,9 @@ def test_excluding_a_subject_changes_n():
 def test_lme_mode_produces_a_fit():
     v = resolve_view(**{**DEFAULTS, "mode": "lme"})
     assert v["mac_fits"]["All_1_3_gcc"] is not None
+
+
+def test_avg_fits_populated_for_displayed_metric():
+    v = resolve_view(**DEFAULTS)
+    r = v["avg_fits"]["T1_mean_015"]["mac"]["All_1_3_gcc"]
+    assert isinstance(r, dict) and "R2" in r

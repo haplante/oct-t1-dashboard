@@ -21,7 +21,7 @@ import numpy as np
 from dash import Dash, dcc, html, Input, Output, State, ctx, ALL
 
 from opticnerve_core import (
-    T1_BANDS, DEF_MAC, DEF_DISC, MAC_AVG, DISC_AVG, SUBJECTS, fit, stat_val,
+    T1_BANDS, DEF_MAC, DEF_DISC, MAC_AVG, DISC_AVG, SUBJECTS, stat_val,
     stat_lbl, resolve_view, DEFAULTS, build_fig1, build_fig2, build_fig3,
 )
 
@@ -33,7 +33,7 @@ def build_avg_table(view):
     excluded, mode, stat = view["excluded"], view["mode"], view["stat"]
 
     def cell(metric, region, band):
-        r = fit(excluded, metric, band, mode)
+        r = view["avg_fits"][band][region][metric]
         val = stat_val(r, stat)
         pf = view["avg_pf"][band][region][metric]
         sig = bool(r and not np.isnan(pf) and pf < 0.05)
