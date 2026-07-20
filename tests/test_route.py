@@ -1,0 +1,34 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "content"))
+
+import Dash_client  # noqa: E402
+
+
+client = Dash_client.server.test_client()
+
+
+def test_fig2_route_returns_plotly_spec():
+    r = client.get("/opticnerve/fig2?exclude=&stat=R2m&band=T1_mean_015"
+                   "&mac=All_1_3_gcc&disc=All_um_&mode=avg")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["figid"] == "fig2"
+    assert "data" in body["figure"] and "layout" in body["figure"]
+    assert body["params"]["mode"] == "avg"
+
+
+def test_all_route_bundles_three_figures():
+    r = client.get("/opticnerve/all")
+    body = r.get_json()
+    assert set(("fig1", "fig2", "fig3")).issubset(body)
+
+
+def test_bad_params_clamp_to_defaults_no_500():
+    r = client.get("/opticnerve/fig1?stat=bogus&band=bogus&mode=bogus")
+    assert r.status_code == 200
+    assert r.get_json()["params"]["stat"] == "R2m"
+
+
+def test_unknown_figid_is_404():
+    assert client.get("/opticnerve/figZ").status_code == 404

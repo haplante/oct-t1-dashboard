@@ -23,6 +23,7 @@ from dash import Dash, dcc, html, Input, Output, State, ctx, ALL
 from opticnerve_core import (
     T1_BANDS, DEF_MAC, DEF_DISC, MAC_AVG, DISC_AVG, SUBJECTS, stat_val,
     stat_lbl, resolve_view, DEFAULTS, build_fig1, build_fig2, build_fig3,
+    parse_params,
 )
 
 
@@ -72,6 +73,32 @@ def build_avg_table(view):
 # ============================================================================
 app = Dash(__name__, title="OCT – T₁ Correlation")
 server = app.server                      # gunicorn entry point (Render)
+
+import json as _json
+
+from flask import request, abort
+from flask_cors import CORS
+from plotly.utils import PlotlyJSONEncoder
+
+CORS(server, resources={r"/opticnerve/*": {"origins": "*"}})
+
+_BUILDERS = {"fig1": build_fig1, "fig2": build_fig2, "fig3": build_fig3}
+
+
+@server.route("/opticnerve/<figid>")
+def opticnerve(figid):
+    if figid not in _BUILDERS and figid != "all":
+        abort(404)
+    p = parse_params(request.args)
+    view = resolve_view(**p)
+    payload = {"figid": figid, "params": {**p, "exclude": list(p["exclude"])},
+               "n": view["n"]}
+    if figid == "all":
+        payload.update({k: _BUILDERS[k](view).to_dict() for k in _BUILDERS})
+    else:
+        payload["figure"] = _BUILDERS[figid](view).to_dict()
+    return server.response_class(
+        _json.dumps(payload, cls=PlotlyJSONEncoder), mimetype="application/json")
 
 GRAPH_CFG = lambda name, w, h: dict(
     scrollZoom=False, displaylogo=False, displayModeBar="hover", responsive=True,
@@ -237,4 +264,4 @@ app.index_string = """<!DOCTYPE html>
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port=3000)
