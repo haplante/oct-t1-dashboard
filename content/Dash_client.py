@@ -100,6 +100,101 @@ def opticnerve(figid):
     return server.response_class(
         _json.dumps(payload, cls=PlotlyJSONEncoder), mimetype="application/json")
 
+
+# ---------------------------------------------------------------------------
+# Standalone live figure pages, for embedding in the article as <iframe>s.
+# MyST won't run author <script>, so the same-page CustomEvent bus can't work
+# there. Instead each figure is its own page served here; because every figure
+# iframe AND the dashboard iframe are same-origin (this app), they sync directly
+# via a BroadcastChannel — no parent-page JS required.
+# ---------------------------------------------------------------------------
+_FIG_CLIENT = r"""
+(function () {
+  "use strict";
+  var FIGID = "__FIGID__";
+  var ORDER = ["exclude","stat","band","mac","disc","mode"];
+  var DEF = {exclude:"",stat:"R2m",band:"T1_mean_015",mac:"All_1_3_gcc",disc:"All_um_",mode:"avg"};
+  var API = window.location.origin;
+  var bc = ("BroadcastChannel" in window) ? new BroadcastChannel("opticnerve") : null;
+  var applying = false, last = null;
+  function readParams() {
+    var q = new URLSearchParams(window.location.search), p = {};
+    ORDER.forEach(function (k) { p[k] = q.has(k) ? q.get(k) : DEF[k]; });
+    return p;
+  }
+  function serialize(p) {
+    return ORDER.map(function (k) { return k + "=" + encodeURIComponent(p[k]); }).join("&");
+  }
+  function equal(a, b) { return serialize(a) === serialize(b); }
+  function render(p) {
+    return fetch(API + "/opticnerve/" + FIGID + "?" + serialize(p))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        Plotly.react("fig", j.figure.data, j.figure.layout,
+                     {responsive:true, displaylogo:false});
+        last = p; wireClicks();
+      })
+      .catch(function (e) {
+        document.getElementById("fig").textContent = "Could not load figure: " + e;
+      });
+  }
+  function wireClicks() {
+    if (FIGID !== "fig3") return;
+    var gd = document.getElementById("fig");
+    if (gd._wired) return; gd._wired = true;
+    gd.on("plotly_click", function (ev) {
+      if (applying) return;
+      var pt = ev.points && ev.points[0];
+      var m = pt && (pt.data.meta || (pt.customdata && pt.customdata[0]));
+      if (!m) return;
+      var p = readParams();
+      if (m.slice(-4) === "_gcc") p.mac = (p.mac === m) ? DEF.mac : m;
+      else if (m.slice(-4) === "_um_") p.disc = (p.disc === m) ? DEF.disc : m;
+      else return;
+      broadcast(p);
+    });
+  }
+  function broadcast(p) {
+    try { window.history.replaceState(null, "", window.location.pathname + "?" + serialize(p)); } catch (e) {}
+    applying = true;
+    render(p).finally(function () {
+      applying = false;
+      if (bc) bc.postMessage({params: p});
+    });
+  }
+  function receive(p) {
+    if (applying) return;
+    if (!last || !equal(last, p)) {
+      try { window.history.replaceState(null, "", window.location.pathname + "?" + serialize(p)); } catch (e) {}
+      render(p);
+    }
+  }
+  if (bc) bc.onmessage = function (e) { var d = e.data || {}; if (d.params) receive(d.params); };
+  window.addEventListener("popstate", function () { receive(readParams()); });
+  render(readParams());
+})();
+"""
+
+_FIG_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OCT-T1 __FIGID__</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+<style>html,body{margin:0;height:100%;background:#fff}
+#fig{width:100%;height:100%}</style></head>
+<body><div id="fig"></div>
+<script>__CLIENT__</script>
+</body></html>"""
+
+
+@server.route("/figure/<figid>")
+def figure_page(figid):
+    if figid not in _BUILDERS:
+        abort(404)
+    page = (_FIG_PAGE.replace("__CLIENT__", _FIG_CLIENT.replace("__FIGID__", figid))
+            .replace("__FIGID__", figid))
+    return server.response_class(page, mimetype="text/html")
+
 GRAPH_CFG = lambda name, w, h: dict(
     scrollZoom=False, displaylogo=False, displayModeBar="hover", responsive=True,
     modeBarButtonsToRemove=["select2d", "lasso2d", "zoom2d", "pan2d", "zoomIn2d",
@@ -257,8 +352,12 @@ app.clientside_callback(
             window.history.replaceState(
                 null, "", window.location.pathname + search + window.location.hash);
         } catch (e) {}
-        if (window.parent && window.parent !== window) {
-            window.parent.postMessage({type: "opticnerve:state", search: search}, "*");
+        // Sync to the sibling figure iframes (same origin) via BroadcastChannel.
+        // A single shared channel instance never receives its own posts, so this
+        // does not loop back into this dashboard.
+        if ("BroadcastChannel" in window) {
+            var bc = window.__ocbc || (window.__ocbc = new BroadcastChannel("opticnerve"));
+            bc.postMessage({params: params});
         }
         return window.dash_clientside.no_update;
     }
@@ -331,9 +430,11 @@ app.index_string = """<!DOCTYPE html>
 <body>{%app_entry%}<footer>
 <script>
 (function () {
-  // Compare the 6 params SEMANTICALLY (not raw string) so an encoding
-  // difference between JS serialize() (encodeURIComponent) and Python
-  // serialize_params() (raw) doesn't cause a spurious extra round-trip.
+  // Absorb state changes from the sibling figure iframes (same origin) via the
+  // shared BroadcastChannel, and reflect them into this app's URL so the normal
+  // _from_url callback runs. Compares the 6 params SEMANTICALLY so encoding
+  // differences never cause a spurious extra round-trip.
+  if (!("BroadcastChannel" in window)) return;
   var ORDER = ["exclude","stat","band","mac","disc","mode"];
   var DEF = {exclude:"", stat:"R2m", band:"T1_mean_015",
              mac:"All_1_3_gcc", disc:"All_um_", mode:"avg"};
@@ -343,15 +444,19 @@ app.index_string = """<!DOCTYPE html>
       return k + "=" + (q.has(k) ? q.get(k) : DEF[k]);
     }).join("&");
   }
-  window.addEventListener("message", function (e) {
+  var bc = window.__ocbc || (window.__ocbc = new BroadcastChannel("opticnerve"));
+  bc.onmessage = function (e) {
     var d = e.data || {};
-    if (d.type !== "opticnerve:state" || typeof d.search !== "string") return;
-    // reflect into this app's URL so the normal _from_url callback runs
-    if (canon(d.search) !== canon(window.location.search)) {
-      window.history.replaceState(null, "", window.location.pathname + d.search);
+    if (!d.params) return;
+    var p = d.params;
+    var search = "?" + ORDER.map(function (k) {
+      return k + "=" + encodeURIComponent(p[k] == null ? "" : p[k]);
+    }).join("&");
+    if (canon(search) !== canon(window.location.search)) {
+      window.history.replaceState(null, "", window.location.pathname + search);
       window.dispatchEvent(new PopStateEvent("popstate"));
     }
-  });
+  };
 })();
 </script>
 {%config%}{%scripts%}{%renderer%}</footer></body></html>"""
