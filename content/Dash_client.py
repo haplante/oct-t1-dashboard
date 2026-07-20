@@ -314,16 +314,29 @@ app.index_string = """<!DOCTYPE html>
 </style></head>
 <body>{%app_entry%}<footer>
 <script>
-window.addEventListener("message", function (e) {
-  var d = e.data || {};
-  if (d.type !== "opticnerve:state") return;
-  // reflect into this app's URL so the normal _from_url callback runs
-  if (typeof d.search === "string" && d.search !== window.location.search) {
-    var url = window.location.pathname + d.search;
-    window.history.replaceState(null, "", url);
-    window.dispatchEvent(new PopStateEvent("popstate"));
+(function () {
+  // Compare the 6 params SEMANTICALLY (not raw string) so an encoding
+  // difference between JS serialize() (encodeURIComponent) and Python
+  // serialize_params() (raw) doesn't cause a spurious extra round-trip.
+  var ORDER = ["exclude","stat","band","mac","disc","mode"];
+  var DEF = {exclude:"", stat:"R2m", band:"T1_mean_015",
+             mac:"All_1_3_gcc", disc:"All_um_", mode:"avg"};
+  function canon(search) {
+    var q = new URLSearchParams((search || "").replace(/^[?]/, ""));
+    return ORDER.map(function (k) {
+      return k + "=" + (q.has(k) ? q.get(k) : DEF[k]);
+    }).join("&");
   }
-});
+  window.addEventListener("message", function (e) {
+    var d = e.data || {};
+    if (d.type !== "opticnerve:state" || typeof d.search !== "string") return;
+    // reflect into this app's URL so the normal _from_url callback runs
+    if (canon(d.search) !== canon(window.location.search)) {
+      window.history.replaceState(null, "", window.location.pathname + d.search);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    }
+  });
+})();
 </script>
 {%config%}{%scripts%}{%renderer%}</footer></body></html>"""
 
