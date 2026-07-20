@@ -12,6 +12,8 @@ import pandas as pd
 from scipy.stats import linregress
 import statsmodels.formula.api as smf
 from plotly.colors import sample_colorscale
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 warnings.simplefilter("ignore")   # silence statsmodels convergence chatter
 
@@ -220,6 +222,170 @@ def wedge(th1, th2, ri, ro, n=60):
 
 # regression lines are drawn in the notebook's band order (0-15 first)
 T1_COLS_ORDER = [b[0] for b in T1_BANDS]
+
+
+# ============================================================================
+# FIGURE 1 — T1 profile along the optic nerve
+# ============================================================================
+def build_fig1(view):
+    prof = PROFILE[~PROFILE["MRI_ID"].isin(view["excluded"])]
+    mm = np.arange(N_SLICES) + 0.5
+    fig = go.Figure()
+    for eye, col in [("OD", C_OD), ("OS", C_OS)]:
+        M = prof.loc[prof.Eye == eye, SLICE_COLS].to_numpy() * T1_SCALE
+        if M.size == 0:
+            continue
+        faint = col.replace("rgb", "rgba").replace(")", ",0.2)")
+        for row in M:
+            fig.add_scatter(x=mm, y=row, mode="lines", line=dict(color=faint, width=0.8),
+                            hoverinfo="skip", showlegend=False, connectgaps=False)
+        xs, mean, sd = [], [], []
+        for j in range(N_SLICES):
+            v = M[:, j]; v = v[~np.isnan(v)]
+            if len(v) < MIN_N:
+                continue
+            xs.append(mm[j]); mean.append(v.mean()); sd.append(v.std(ddof=1))
+        od = eye == "OD"
+        fig.add_scatter(x=xs, y=mean, mode="lines+markers", name="OD (Right)" if od else "OS (Left)",
+            line=dict(color=col, width=2),
+            marker=dict(size=10, color="white" if od else col,
+                        line=dict(color=col if od else "white", width=1.5)),
+            error_y=dict(type="data", array=sd, visible=True, color=col, thickness=1.2, width=4),
+            hovertemplate=f"mm %{{x}}<br>T₁ %{{y:.0f}} ms<extra>{eye}</extra>")
+    fig.update_layout(
+        autosize=True, paper_bgcolor="white", plot_bgcolor="white", dragmode=False,
+        font=dict(color="black", family="DejaVu Sans, Arial, sans-serif", size=14),
+        title=dict(text="T₁ as a function of position along the ON", x=0.5, xanchor="center"),
+        margin=dict(l=70, r=10, t=45, b=45),
+        xaxis=dict(**AX, title=dict(text="Position along ON (mm)", standoff=5), range=[0, 15]),
+        yaxis=dict(**AX, title=dict(text="T₁ (ms)"), range=[500, 1800]),
+        legend=dict(x=0.02, y=0.98, xanchor="left", yanchor="top", bgcolor="rgba(255,255,255,0)"))
+    return fig
+
+
+# ============================================================================
+# FIGURE 2 — correlation with 4 regression lines per panel
+# ============================================================================
+def build_fig2(view):
+    mode, stat, sel_band = view["mode"], view["stat"], view["band"]
+    y_title = ("marginal ON T₁ (ms)" if mode == "lme" else "ON T₁ (ms)")
+    fig = make_subplots(rows=1, cols=2, horizontal_spacing=0.12,
+                        subplot_titles=[f"Macula – {sector_name(view['mac'])}",
+                                        f"Optic Disc – {sector_name(view['disc'])}"])
+    for col, (title, xlab, sector, key) in enumerate(
+            [(PANELS[0][0], PANELS[0][2], view["mac"], "mac"),
+             (PANELS[1][0], PANELS[1][2], view["disc"], "disc")], start=1):
+        leg = "legend" if col == 1 else "legend2"
+        panel = view["panel_fits"][key]
+        fits = [panel["fits"][b] for b in T1_COLS_ORDER]
+        pf = [panel["pf"][b] for b in T1_COLS_ORDER]
+        for (band, lbl, c), r, q in zip(T1_BANDS, fits, pf):
+            if not r:
+                continue
+            vis = True if band == sel_band else "legendonly"
+            grp = f"{col}-{band}"
+            x, y, subj = np.array(r["x"]), np.array(r["y"]), np.array(r["subj"])
+            hov = lambda side="": (f"<b>%{{customdata}}</b>{side} · {lbl}<br>"
+                                   f"{sector_name(sector)} = %{{x:.2f}}"
+                                   f"<br>T₁ = %{{y:.0f}} ms<extra></extra>")
+            if r["eye"] is None:                       # average mode: one marker per subject
+                fig.add_scatter(x=x, y=y, mode="markers", legend=leg, legendgroup=grp,
+                    showlegend=False, visible=vis, row=1, col=col, customdata=subj,
+                    marker=dict(color=c, size=10, line=dict(color="white", width=1.2)),
+                    hovertemplate=hov(), hoverlabel=dict(bgcolor="#222", font=dict(color="#fff")))
+            else:                                      # LME mode: OD filled, OS open
+                eye = np.array(r["eye"])
+                for e in ("OD", "OS"):
+                    sel_e = eye == e
+                    marker = (dict(color="white", size=10, line=dict(color=c, width=1.5)) if e == "OD"
+                              else dict(color=c, size=10, line=dict(width=0)))
+                    fig.add_scatter(x=x[sel_e], y=y[sel_e], mode="markers", legend=leg,
+                        legendgroup=grp, showlegend=False, visible=vis, row=1, col=col,
+                        customdata=subj[sel_e], marker=marker,
+                        hovertemplate=hov(f" · {e}"), hoverlabel=dict(bgcolor="#222", font=dict(color="#fff")))
+            xs = np.array([x.min(), x.max()])
+            star = " *" if (not np.isnan(q) and q < 0.05) else ""
+            fig.add_scatter(x=xs, y=r["b0"] + r["b1"] * xs, mode="lines", legend=leg,
+                legendgroup=grp, visible=vis, row=1, col=col, line=dict(color=c, width=2),
+                hoverinfo="skip", name=f"{lbl}  ({stat_lbl(stat)}={fmt2(stat_val(r, stat))}){star}")
+        fig.update_xaxes(title=dict(text=xlab, standoff=5), row=1, col=col, **AX)
+        fig.update_yaxes(title=dict(text=y_title), row=1, col=col, **AX)
+
+    leg_style = dict(bgcolor="rgba(255,255,255,0.7)", bordercolor="#ccc", borderwidth=1,
+                     font=dict(size=12), xanchor="right", yanchor="top", y=0.99,
+                     groupclick="togglegroup", tracegroupgap=1)
+    fig.update_layout(autosize=True, paper_bgcolor="white", plot_bgcolor="white", dragmode=False,
+        font=dict(color="black", family="DejaVu Sans, Arial, sans-serif", size=13),
+        margin=dict(l=70, r=10, t=40, b=45),
+        legend=dict(**leg_style, x=0.43), legend2=dict(**leg_style, x=0.99))
+    for a in fig.layout.annotations:
+        a.font.size = 15
+    return fig
+
+
+# ============================================================================
+# FIGURE 3 — OCT sector maps
+# ============================================================================
+def build_fig3(view):
+    mode, stat, sel_band = view["mode"], view["stat"], view["band"]
+    vmin = -1 if stat == "Rm" else 0
+    band_lbl = BAND_LABEL[sel_band]
+    fig = make_subplots(rows=1, cols=2, horizontal_spacing=0)
+    ann = []
+
+    def draw(sectors, axis, image, fits, pf):
+        xa, ya = ("x", "y") if axis == 1 else ("x2", "y2")
+        fig.add_layout_image(dict(source=image, xref=xa, yref=ya, x=-LIM, y=LIM,
+            sizex=2 * LIM, sizey=2 * LIM, xanchor="left", yanchor="top",
+            sizing="stretch", layer="below"))
+        for s in sectors:
+            r = fits[s["m"]]
+            val = stat_val(r, stat)
+            sig = "*" if (r and not np.isnan(pf[s["m"]]) and pf[s["m"]] < 0.05) else ""
+            x, y = wedge(s["th1"], s["th2"], s["ri"], s["ro"])
+            fig.add_scatter(x=x, y=y, mode="lines", fill="toself", fillcolor=jet(val, vmin=vmin),
+                line=dict(color="white", width=2), hoveron="fills", showlegend=False,
+                row=1, col=axis, customdata=[s["m"]] * len(x), meta=s["m"], hoverinfo="text",
+                text=f"{sector_name(s['m'])} — {stat_lbl(stat)} = {fmt2(val)}{sig}"
+                     f"<br><i>(click → use in Figure 2)</i>",
+                hoverlabel=dict(bgcolor="#222", font=dict(color="#fff")))
+            rm = 0 if s["ri"] == 0 else (s["ri"] + s["ro"]) / 2
+            tm = (s["th1"] + s["th2"]) / 2
+            ann.append(dict(x=rm * np.cos(tm) * 0.95, y=rm * np.sin(tm) * 0.95, xref=xa, yref=ya,
+                text="" if np.isnan(val) else f"{fmt2(val)}{sig}", showarrow=False,
+                font=dict(color="white", size=15), bgcolor="rgba(0,0,0,0.4)", borderpad=2.5))
+        return xa, ya
+
+    xa, ya = draw(MAC_SECTORS, 1, MAC_URI, view["mac_fits"], view["mac_pf"])
+    xa2, ya2 = draw(DISC_SECTORS, 2, DISC_URI, view["disc_fits"], view["disc_pf"])
+    for k, lab in enumerate(mac_q):
+        tm = (mac_ang[k] + mac_ang[k + 1]) / 2
+        ann.append(dict(x=1.1 * np.cos(tm), y=1.1 * np.sin(tm), xref=xa, yref=ya,
+                        text=f"<b>{lab}</b>", showarrow=False, font=dict(color="white", size=15)))
+    for k, lab in enumerate(disc_short):
+        tm = (disc_th[k] + disc_th[k + 1]) / 2
+        ann.append(dict(x=1.2 * np.cos(tm), y=1.2 * np.sin(tm), xref=xa2, yref=ya2,
+                        text=f"<b>{lab}</b>", showarrow=False, font=dict(color="white", size=15)))
+    ann += [
+        dict(text=f"Macula – T₁ ({band_lbl})", xref="paper", yref="paper", x=0.25, y=1.09,
+             xanchor="center", showarrow=False, font=dict(color="black", size=15)),
+        dict(text=f"Optic Disc – T₁ ({band_lbl})", xref="paper", yref="paper", x=0.75, y=1.09,
+             xanchor="center", showarrow=False, font=dict(color="black", size=15)),
+        dict(text="* p<sub>FDR</sub> < 0.05", xref="paper", yref="paper", x=0.885, y=0.04,
+             xanchor="center", showarrow=False, font=dict(color="white", size=12),
+             bgcolor="rgba(0,0,0,0.4)", borderpad=2),
+    ]
+    fig.add_scatter(x=[None], y=[None], mode="markers", showlegend=False, hoverinfo="skip",
+        marker=dict(colorscale="Jet", cmin=vmin, cmax=1, color=[vmin], size=0.1, showscale=True,
+            colorbar=dict(title=dict(text=stat_lbl(stat), side="top"), x=0.98, len=0.85,
+                          thickness=12, tickfont=dict(color="black"))))
+    axb = dict(range=[-LIM, LIM], visible=False, fixedrange=True)
+    fig.update_layout(autosize=True, paper_bgcolor="white", plot_bgcolor="white",
+        font=dict(color="black", family="DejaVu Sans, Arial, sans-serif"), dragmode=False,
+        margin=dict(l=0, r=0, t=30, b=15), showlegend=False, annotations=ann,
+        xaxis=dict(**axb, domain=[0, 0.5], scaleanchor="y", scaleratio=1), yaxis=dict(**axb, domain=[0, 1]),
+        xaxis2=dict(**axb, domain=[0.5, 1], scaleanchor="y2", scaleratio=1), yaxis2=dict(**axb, domain=[0, 1]))
+    return fig
 
 
 def resolve_view(exclude=(), stat="R2m", band="T1_mean_015",

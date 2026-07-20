@@ -18,197 +18,24 @@ Deploy:        gunicorn Dash_client:server  (see render.yaml)
 
 import numpy as np
 
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-
 from dash import Dash, dcc, html, Input, Output, State, ctx, ALL
 
 from opticnerve_core import (
-    T1_SCALE, N_SLICES, MIN_N, C_OD, C_OS, T1_BANDS, T1_COLS, T1_COLS_ORDER,
-    BAND_LABEL, DEF_MAC, DEF_DISC, PANELS, DISC_METRICS, MAC_METRICS, MAC_AVG,
-    DISC_AVG, NAMES, sector_name, PI, LIM, rC, rI, rO, mac_q, mac_ang,
-    MAC_SECTORS, disc_short, disc_th, DISC_SECTORS, MERGED, PROFILE, SLICE_COLS,
-    SUBJECTS, MAC_URI, DISC_URI, AX, bh_fdr, fit, fit_family, stat_val, stat_lbl,
-    fmt2, jet, wedge, resolve_view, DEFAULTS,
+    T1_BANDS, DEF_MAC, DEF_DISC, MAC_AVG, DISC_AVG, SUBJECTS, fit, stat_val,
+    stat_lbl, resolve_view, DEFAULTS, build_fig1, build_fig2, build_fig3,
 )
-
-# ============================================================================
-# FIGURE 1 — T1 profile along the optic nerve
-# ============================================================================
-def build_fig1(excluded):
-    prof = PROFILE[~PROFILE["MRI_ID"].isin(excluded)]
-    mm = np.arange(N_SLICES) + 0.5
-    fig = go.Figure()
-    for eye, col in [("OD", C_OD), ("OS", C_OS)]:
-        M = prof.loc[prof.Eye == eye, SLICE_COLS].to_numpy() * T1_SCALE
-        if M.size == 0:
-            continue
-        faint = col.replace("rgb", "rgba").replace(")", ",0.2)")
-        for row in M:
-            fig.add_scatter(x=mm, y=row, mode="lines", line=dict(color=faint, width=0.8),
-                            hoverinfo="skip", showlegend=False, connectgaps=False)
-        xs, mean, sd = [], [], []
-        for j in range(N_SLICES):
-            v = M[:, j]; v = v[~np.isnan(v)]
-            if len(v) < MIN_N:
-                continue
-            xs.append(mm[j]); mean.append(v.mean()); sd.append(v.std(ddof=1))
-        od = eye == "OD"
-        fig.add_scatter(x=xs, y=mean, mode="lines+markers", name="OD (Right)" if od else "OS (Left)",
-            line=dict(color=col, width=2),
-            marker=dict(size=10, color="white" if od else col,
-                        line=dict(color=col if od else "white", width=1.5)),
-            error_y=dict(type="data", array=sd, visible=True, color=col, thickness=1.2, width=4),
-            hovertemplate=f"mm %{{x}}<br>T₁ %{{y:.0f}} ms<extra>{eye}</extra>")
-    fig.update_layout(
-        autosize=True, paper_bgcolor="white", plot_bgcolor="white", dragmode=False,
-        font=dict(color="black", family="DejaVu Sans, Arial, sans-serif", size=14),
-        title=dict(text="T₁ as a function of position along the ON", x=0.5, xanchor="center"),
-        margin=dict(l=70, r=10, t=45, b=45),
-        xaxis=dict(**AX, title=dict(text="Position along ON (mm)", standoff=5), range=[0, 15]),
-        yaxis=dict(**AX, title=dict(text="T₁ (ms)"), range=[500, 1800]),
-        legend=dict(x=0.02, y=0.98, xanchor="left", yanchor="top", bgcolor="rgba(255,255,255,0)"))
-    return fig
-
-
-# ============================================================================
-# FIGURE 2 — correlation with 4 regression lines per panel
-# ============================================================================
-def build_fig2(excluded, mode, stat, sel_band, sel):
-    y_title = ("marginal ON T₁ (ms)" if mode == "lme" else "ON T₁ (ms)")
-    fig = make_subplots(rows=1, cols=2, horizontal_spacing=0.12,
-                        subplot_titles=[f"Macula – {sector_name(sel['mac'])}",
-                                        f"Optic Disc – {sector_name(sel['disc'])}"])
-    for col, (title, xlab, sector) in enumerate(
-            [(PANELS[0][0], PANELS[0][2], sel["mac"]),
-             (PANELS[1][0], PANELS[1][2], sel["disc"])], start=1):
-        leg = "legend" if col == 1 else "legend2"
-        fits = [fit(excluded, sector, band, mode) for band in T1_COLS_ORDER]
-        pf = bh_fdr([f["p"] if f else np.nan for f in fits])
-        for (band, lbl, c), r, q in zip(T1_BANDS, fits, pf):
-            if not r:
-                continue
-            vis = True if band == sel_band else "legendonly"
-            grp = f"{col}-{band}"
-            x, y, subj = np.array(r["x"]), np.array(r["y"]), np.array(r["subj"])
-            hov = lambda side="": (f"<b>%{{customdata}}</b>{side} · {lbl}<br>"
-                                   f"{sector_name(sector)} = %{{x:.2f}}"
-                                   f"<br>T₁ = %{{y:.0f}} ms<extra></extra>")
-            if r["eye"] is None:                       # average mode: one marker per subject
-                fig.add_scatter(x=x, y=y, mode="markers", legend=leg, legendgroup=grp,
-                    showlegend=False, visible=vis, row=1, col=col, customdata=subj,
-                    marker=dict(color=c, size=10, line=dict(color="white", width=1.2)),
-                    hovertemplate=hov(), hoverlabel=dict(bgcolor="#222", font=dict(color="#fff")))
-            else:                                      # LME mode: OD filled, OS open
-                eye = np.array(r["eye"])
-                for e in ("OD", "OS"):
-                    sel_e = eye == e
-                    marker = (dict(color="white", size=10, line=dict(color=c, width=1.5)) if e == "OD"
-                              else dict(color=c, size=10, line=dict(width=0)))
-                    fig.add_scatter(x=x[sel_e], y=y[sel_e], mode="markers", legend=leg,
-                        legendgroup=grp, showlegend=False, visible=vis, row=1, col=col,
-                        customdata=subj[sel_e], marker=marker,
-                        hovertemplate=hov(f" · {e}"), hoverlabel=dict(bgcolor="#222", font=dict(color="#fff")))
-            xs = np.array([x.min(), x.max()])
-            star = " *" if (not np.isnan(q) and q < 0.05) else ""
-            fig.add_scatter(x=xs, y=r["b0"] + r["b1"] * xs, mode="lines", legend=leg,
-                legendgroup=grp, visible=vis, row=1, col=col, line=dict(color=c, width=2),
-                hoverinfo="skip", name=f"{lbl}  ({stat_lbl(stat)}={fmt2(stat_val(r, stat))}){star}")
-        fig.update_xaxes(title=dict(text=xlab, standoff=5), row=1, col=col, **AX)
-        fig.update_yaxes(title=dict(text=y_title), row=1, col=col, **AX)
-
-    leg_style = dict(bgcolor="rgba(255,255,255,0.7)", bordercolor="#ccc", borderwidth=1,
-                     font=dict(size=12), xanchor="right", yanchor="top", y=0.99,
-                     groupclick="togglegroup", tracegroupgap=1)
-    fig.update_layout(autosize=True, paper_bgcolor="white", plot_bgcolor="white", dragmode=False,
-        font=dict(color="black", family="DejaVu Sans, Arial, sans-serif", size=13),
-        margin=dict(l=70, r=10, t=40, b=45),
-        legend=dict(**leg_style, x=0.43), legend2=dict(**leg_style, x=0.99))
-    for a in fig.layout.annotations:
-        a.font.size = 15
-    return fig
-
-
-# ============================================================================
-# FIGURE 3 — OCT sector maps
-# ============================================================================
-def build_fig3(excluded, mode, stat, sel_band):
-    vmin = -1 if stat == "Rm" else 0
-    band_lbl = BAND_LABEL[sel_band]
-    fig = make_subplots(rows=1, cols=2, horizontal_spacing=0)
-    ann = []
-
-    def draw(sectors, axis, image):
-        fits, pf = fit_family(excluded, [s["m"] for s in sectors], sel_band, mode)
-        xa, ya = ("x", "y") if axis == 1 else ("x2", "y2")
-        fig.add_layout_image(dict(source=image, xref=xa, yref=ya, x=-LIM, y=LIM,
-            sizex=2 * LIM, sizey=2 * LIM, xanchor="left", yanchor="top",
-            sizing="stretch", layer="below"))
-        for s in sectors:
-            r = fits[s["m"]]
-            val = stat_val(r, stat)
-            sig = "*" if (r and not np.isnan(pf[s["m"]]) and pf[s["m"]] < 0.05) else ""
-            x, y = wedge(s["th1"], s["th2"], s["ri"], s["ro"])
-            fig.add_scatter(x=x, y=y, mode="lines", fill="toself", fillcolor=jet(val, vmin=vmin),
-                line=dict(color="white", width=2), hoveron="fills", showlegend=False,
-                row=1, col=axis, customdata=[s["m"]] * len(x), meta=s["m"], hoverinfo="text",
-                text=f"{sector_name(s['m'])} — {stat_lbl(stat)} = {fmt2(val)}{sig}"
-                     f"<br><i>(click → use in Figure 2)</i>",
-                hoverlabel=dict(bgcolor="#222", font=dict(color="#fff")))
-            rm = 0 if s["ri"] == 0 else (s["ri"] + s["ro"]) / 2
-            tm = (s["th1"] + s["th2"]) / 2
-            ann.append(dict(x=rm * np.cos(tm) * 0.95, y=rm * np.sin(tm) * 0.95, xref=xa, yref=ya,
-                text="" if np.isnan(val) else f"{fmt2(val)}{sig}", showarrow=False,
-                font=dict(color="white", size=15), bgcolor="rgba(0,0,0,0.4)", borderpad=2.5))
-        return xa, ya
-
-    xa, ya = draw(MAC_SECTORS, 1, MAC_URI)
-    xa2, ya2 = draw(DISC_SECTORS, 2, DISC_URI)
-    for k, lab in enumerate(mac_q):
-        tm = (mac_ang[k] + mac_ang[k + 1]) / 2
-        ann.append(dict(x=1.1 * np.cos(tm), y=1.1 * np.sin(tm), xref=xa, yref=ya,
-                        text=f"<b>{lab}</b>", showarrow=False, font=dict(color="white", size=15)))
-    for k, lab in enumerate(disc_short):
-        tm = (disc_th[k] + disc_th[k + 1]) / 2
-        ann.append(dict(x=1.2 * np.cos(tm), y=1.2 * np.sin(tm), xref=xa2, yref=ya2,
-                        text=f"<b>{lab}</b>", showarrow=False, font=dict(color="white", size=15)))
-    ann += [
-        dict(text=f"Macula – T₁ ({band_lbl})", xref="paper", yref="paper", x=0.25, y=1.09,
-             xanchor="center", showarrow=False, font=dict(color="black", size=15)),
-        dict(text=f"Optic Disc – T₁ ({band_lbl})", xref="paper", yref="paper", x=0.75, y=1.09,
-             xanchor="center", showarrow=False, font=dict(color="black", size=15)),
-        dict(text="* p<sub>FDR</sub> < 0.05", xref="paper", yref="paper", x=0.885, y=0.04,
-             xanchor="center", showarrow=False, font=dict(color="white", size=12),
-             bgcolor="rgba(0,0,0,0.4)", borderpad=2),
-    ]
-    fig.add_scatter(x=[None], y=[None], mode="markers", showlegend=False, hoverinfo="skip",
-        marker=dict(colorscale="Jet", cmin=vmin, cmax=1, color=[vmin], size=0.1, showscale=True,
-            colorbar=dict(title=dict(text=stat_lbl(stat), side="top"), x=0.98, len=0.85,
-                          thickness=12, tickfont=dict(color="black"))))
-    axb = dict(range=[-LIM, LIM], visible=False, fixedrange=True)
-    fig.update_layout(autosize=True, paper_bgcolor="white", plot_bgcolor="white",
-        font=dict(color="black", family="DejaVu Sans, Arial, sans-serif"), dragmode=False,
-        margin=dict(l=0, r=0, t=30, b=15), showlegend=False, annotations=ann,
-        xaxis=dict(**axb, domain=[0, 0.5], scaleanchor="y", scaleratio=1), yaxis=dict(**axb, domain=[0, 1]),
-        xaxis2=dict(**axb, domain=[0.5, 1], scaleanchor="y2", scaleratio=1), yaxis2=dict(**axb, domain=[0, 1]))
-    return fig
 
 
 # ============================================================================
 # AVERAGES TABLE — clickable rows drive Figure 2
 # ============================================================================
-def build_avg_table(excluded, mode, stat, sel):
-    # fit whole families (for correct FDR), keep the displayed rows
-    per_band = {}
-    for band, _, _ in T1_BANDS:
-        _, mac_pf = fit_family(excluded, MAC_METRICS, band, mode)
-        _, disc_pf = fit_family(excluded, DISC_METRICS, band, mode)
-        per_band[band] = dict(mac=mac_pf, disc=disc_pf)
+def build_avg_table(view):
+    excluded, mode, stat = view["excluded"], view["mode"], view["stat"]
 
     def cell(metric, region, band):
         r = fit(excluded, metric, band, mode)
         val = stat_val(r, stat)
-        pf = per_band[band][region][metric]
+        pf = view["avg_pf"][band][region][metric]
         sig = bool(r and not np.isnan(pf) and pf < 0.05)
         txt = ("—" if (val is None or np.isnan(val)) else f"{val:.2f}") + ("*" if sig else "")
         return html.Td(txt, className="aval sig" if sig else "aval")
@@ -230,8 +57,8 @@ def build_avg_table(excluded, mode, stat, sel):
         [html.Th("T₁ sector", className="corner", colSpan=2)]
         + [html.Th(lbl) for _, lbl, _ in T1_BANDS]))
     body = html.Tbody(
-        rows("Macula (GCC)", MAC_AVG, "mac", sel["mac"])
-        + rows("Optic Disc (RNFL)", DISC_AVG, "disc", sel["disc"]))
+        rows("Macula (GCC)", MAC_AVG, "mac", view["mac"])
+        + rows("Optic Disc (RNFL)", DISC_AVG, "disc", view["disc"]))
     return [
         html.Div([f"OCT × T₁ band correlation · {stat_lbl(stat)} ",
                   html.Span("— click a row to use that sector in Figure 2", className="avghint")],
@@ -267,15 +94,15 @@ app.layout = html.Div([
             html.Div(id="ncount", className="ncount"),
             html.Hr(),
             html.Div("Statistic", className="lbl"),
-            dcc.RadioItems(id="stat", value="R2m",
+            dcc.RadioItems(id="stat", value=DEFAULTS["stat"],
                            options=[{"label": " R²", "value": "R2m"}, {"label": " R", "value": "Rm"}]),
             html.Hr(),
             html.Div("T₁ sector", className="lbl"),
-            dcc.Dropdown(id="t1band", clearable=False, value="T1_mean_015",
+            dcc.Dropdown(id="t1band", clearable=False, value=DEFAULTS["band"],
                          options=[{"label": lbl, "value": k} for k, lbl, _ in T1_BANDS]),
             html.Hr(),
             html.Div("Regression model", className="lbl"),
-            dcc.RadioItems(id="mode", value="avg",
+            dcc.RadioItems(id="mode", value=DEFAULTS["mode"],
                            options=[{"label": " Average + OLS", "value": "avg"},
                                     {"label": " LME (per-eye, marginal T₁)", "value": "lme"}]),
         ]),
@@ -342,12 +169,11 @@ def _select_sector(click, _rows, sel):
 def _render(included, stat, sel_band, mode, sel):
     included = included or []
     excluded = tuple(sorted(set(SUBJECTS) - set(included)))
-    count = f"{len(included)} / {len(SUBJECTS)} subjects included"
-    return (build_fig1(excluded),
-            build_fig2(excluded, mode, stat, sel_band, sel),
-            build_fig3(excluded, mode, stat, sel_band),
-            build_avg_table(excluded, mode, stat, sel),
-            count)
+    view = resolve_view(exclude=excluded, stat=stat, band=sel_band,
+                        mac=sel["mac"], disc=sel["disc"], mode=mode)
+    count = f"{view['n']} / {len(SUBJECTS)} subjects included"
+    return (build_fig1(view), build_fig2(view), build_fig3(view),
+            build_avg_table(view), count)
 
 
 # ---- dark theme (kept inline so the app stays a single file) ----
