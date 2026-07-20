@@ -5,13 +5,22 @@ numbering:
     template: Fig. %s
 ---
 
+<meta name="opticnerve-api" content="http://localhost:3000">
+<script>
+  window.OPTICNERVE_API_BASE = "http://localhost:3000";
+  window.OPTICNERVE_DASH_ORIGIN = "http://localhost:3000";
+  window.OPTICNERVE_STATIC = "/build/static";  /* MyST static path; adjust at deploy */
+</script>
+
 ## Dashboard
 
 <div style="width:100%; aspect-ratio:1400/840; overflow:hidden;">
 <div style="position:relative; width:1400px; height:840px; transform:scale(0.514286); transform-origin:top left;">
-<iframe src="https://oct-t1-standard-correlation.netlify.app/" style="width:100%; height:100%; border:0;"></iframe>
+<iframe data-opticnerve-dash src="http://localhost:3000/" style="width:100%; height:100%; border:0;"></iframe>
 </div>
 </div>
+<script src="/build/static/state_sync.js"></script>
+
 
 ## Introduction
 
