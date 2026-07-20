@@ -30,5 +30,18 @@ def test_bad_params_clamp_to_defaults_no_500():
     assert r.get_json()["params"]["stat"] == "R2m"
 
 
+def test_bad_mac_disc_clamp_to_defaults_no_500():
+    # a bad sector metric must not reach fit()/groupby (KeyError -> 500); it clamps.
+    for fid in ("fig2", "fig3"):
+        r = client.get(f"/opticnerve/{fid}?mac=BOGUS&disc=NOPE")
+        assert r.status_code == 200, f"{fid} 500'd on bad mac/disc"
+        p = r.get_json()["params"]
+        assert p["mac"] == "All_1_3_gcc" and p["disc"] == "All_um_"
+
+
+def test_all_route_returns_200():
+    assert client.get("/opticnerve/all").status_code == 200
+
+
 def test_unknown_figid_is_404():
     assert client.get("/opticnerve/figZ").status_code == 404

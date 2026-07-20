@@ -33,12 +33,15 @@ def parse_params(mapping):
     exclude = g("exclude", "") or ""
     exclude = tuple(s for s in (x.strip() for x in exclude.split(",")) if s)
     pick = lambda key, allowed: (g(key) if g(key) in allowed else DEFAULTS[key])
+    # mac/disc are clamped to the known sector metrics so a bad value can never
+    # reach fit()/groupby (which would KeyError -> HTTP 500 on the public route).
+    # MAC_METRICS/DISC_METRICS are module-level, defined below; resolved at call time.
     return {
         "exclude": exclude,
         "stat": pick("stat", _STATS),
         "band": pick("band", _BANDS),
-        "mac": g("mac") or DEFAULTS["mac"],
-        "disc": g("disc") or DEFAULTS["disc"],
+        "mac": pick("mac", MAC_METRICS),
+        "disc": pick("disc", DISC_METRICS),
         "mode": pick("mode", _MODES),
     }
 
