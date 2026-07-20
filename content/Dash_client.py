@@ -191,7 +191,10 @@ def _to_url(included, stat, band, mode, sel):
 
 
 # ---- clicking a Fig 3 wedge or an averages row selects the Fig 2 sector ----
-@app.callback(Output("sel", "data"),
+# sel.data is also written on load by _from_url (the canonical writer), so this
+# click-driven writer is a duplicate output -> allow_duplicate=True (requires
+# prevent_initial_call=True, already set).
+@app.callback(Output("sel", "data", allow_duplicate=True),
               Input("fig3", "clickData"),
               Input({"type": "avgrow", "metric": ALL, "region": ALL}, "n_clicks"),
               State("sel", "data"), prevent_initial_call=True)
