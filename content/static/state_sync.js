@@ -17,7 +17,7 @@
     ORDER.forEach(k => { p[k] = q.has(k) ? q.get(k) : DEF[k]; });
     return p;
   }
-  function serialize(p) { return ORDER.map(k => `${k}=${p[k]}`).join("&"); }
+  function serialize(p) { return ORDER.map(k => `${k}=${encodeURIComponent(p[k])}`).join("&"); }
   function equal(a, b) { return serialize(a) === serialize(b); }
   function writeURL(p) {
     history.replaceState(null, "", location.pathname + "?" + serialize(p) + location.hash);
@@ -43,6 +43,7 @@
     if (gd._onWired) return;
     gd._onWired = true;
     gd.on("plotly_click", ev => {
+      if (applying) return;            // ignore clicks while a broadcast is in flight
       const pt = ev.points && ev.points[0];
       const m = pt && (pt.data.meta || (pt.customdata && pt.customdata[0]));
       if (!m) return;
