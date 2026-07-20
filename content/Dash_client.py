@@ -109,6 +109,7 @@ GRAPH_CFG = lambda name, w, h: dict(
 app.layout = html.Div([
     dcc.Location(id="url", refresh=False),
     dcc.Store(id="postbridge-dummy"),
+    dcc.Store(id="all-subjects", data=SUBJECTS),   # for the clientside URL writer
     html.H1(["OCT – T", html.Sub("1"), " Correlation Figures"]),
     dcc.Store(id="sel", data={"mac": DEF_MAC, "disc": DEF_DISC}),
     html.Div(id="app", children=[
@@ -180,14 +181,13 @@ def _from_url(search, _a, _n, stat, band, mode, sel):
     return included, p["stat"], p["band"], p["mode"], {"mac": p["mac"], "disc": p["disc"]}
 
 
-# ---- every control change rewrites the URL query string ----
-@app.callback(Output("url", "search"),
-              Input("subjects", "value"), Input("stat", "value"),
-              Input("t1band", "value"), Input("mode", "value"), Input("sel", "data"))
-def _to_url(included, stat, band, mode, sel):
-    excluded = tuple(sorted(set(SUBJECTS) - set(included or [])))
-    return "?" + serialize_params({"exclude": excluded, "stat": stat, "band": band,
-                                   "mac": sel["mac"], "disc": sel["disc"], "mode": mode})
+# NOTE: writing the URL is done CLIENTSIDE (see the push-out callback near the
+# bottom), NOT via a Dash Output on url.search. A server callback writing
+# url.search would form a dependency cycle with _from_url (which reads url.search
+# to set the controls): subjects.value -> url.search -> subjects.value. Writing
+# the URL with history.replaceState from a clientside callback (dummy output)
+# keeps the graph acyclic while still updating the address bar + notifying the
+# iframe parent.
 
 
 # ---- clicking a Fig 3 wedge or an averages row selects the Fig 2 sector ----
@@ -235,26 +235,39 @@ def _render(included, stat, sel_band, mode, sel):
             build_avg_table(view), count)
 
 
-# ---- postMessage bridge: emit this app's URL to the parent window (iframe host) ----
-# NOTE (deviation from task-7 brief): the brief's Step 1 snippet outputs to
-# Output("url", "search"), the same prop that `_to_url` above already writes.
-# Two callbacks writing the same Output raises DuplicateCallbackOutput, and
-# having url.search as BOTH the Input and Output of one callback additionally
-# risks a same-input-output error. This callback instead only *reads*
-# url.search (Input) and writes to a dedicated dummy dcc.Store
-# ("postbridge-dummy") that nothing else uses, returning no_update.
+# ---- push state OUT (clientside): write the URL + notify the iframe parent ----
+# Runs on any control/click change. Writes the query string with
+# history.replaceState (NOT a Dash Output on url.search -> no dependency cycle
+# with _from_url) and postMessages the new search to the parent window so the
+# inline article figures (state_sync.js bus) stay in sync. Output is a throwaway
+# store. exclude is derived from the full subject list (all-subjects store).
 app.clientside_callback(
     """
-    function(search) {
+    function(included, stat, band, mode, sel, allSubjects) {
+        var inc = included || [], all = allSubjects || [];
+        var excl = all.filter(function (s) { return inc.indexOf(s) === -1; });
+        var params = {exclude: excl.join(","), stat: stat, band: band,
+                      mac: (sel || {}).mac, disc: (sel || {}).disc, mode: mode};
+        var ORDER = ["exclude", "stat", "band", "mac", "disc", "mode"];
+        var qs = ORDER.map(function (k) {
+            return k + "=" + encodeURIComponent(params[k] == null ? "" : params[k]);
+        }).join("&");
+        var search = "?" + qs;
+        try {
+            window.history.replaceState(
+                null, "", window.location.pathname + search + window.location.hash);
+        } catch (e) {}
         if (window.parent && window.parent !== window) {
-            window.parent.postMessage(
-                {type: "opticnerve:state", search: search || ""}, "*");
+            window.parent.postMessage({type: "opticnerve:state", search: search}, "*");
         }
         return window.dash_clientside.no_update;
     }
     """,
     Output("postbridge-dummy", "data"),
-    Input("url", "search"),
+    Input("subjects", "value"), Input("stat", "value"), Input("t1band", "value"),
+    Input("mode", "value"), Input("sel", "data"),
+    State("all-subjects", "data"),
+    prevent_initial_call=True,
 )
 
 
