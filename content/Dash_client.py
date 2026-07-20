@@ -23,7 +23,7 @@ from dash import Dash, dcc, html, Input, Output, State, ctx, ALL
 from opticnerve_core import (
     T1_BANDS, DEF_MAC, DEF_DISC, MAC_AVG, DISC_AVG, SUBJECTS, stat_val,
     stat_lbl, resolve_view, DEFAULTS, build_fig1, build_fig2, build_fig3,
-    parse_params,
+    parse_params, serialize_params,
 )
 
 
@@ -107,6 +107,7 @@ GRAPH_CFG = lambda name, w, h: dict(
     toImageButtonOptions=dict(format="png", filename=name, width=w, height=h, scale=600 / 96))
 
 app.layout = html.Div([
+    dcc.Location(id="url", refresh=False),
     html.H1(["OCT – T", html.Sub("1"), " Correlation Figures"]),
     dcc.Store(id="sel", data={"mac": DEF_MAC, "disc": DEF_DISC}),
     html.Div(id="app", children=[
@@ -153,12 +154,39 @@ app.layout = html.Div([
 ])
 
 
-# ---- All / None buttons set the subject checklist ----
-@app.callback(Output("subjects", "value"),
-              Input("sel-all", "n_clicks"), Input("sel-none", "n_clicks"),
-              prevent_initial_call=True)
-def _select_all_none(_a, _n):
-    return SUBJECTS if ctx.triggered_id == "sel-all" else []
+from urllib.parse import parse_qsl
+
+
+def _qs_to_dict(search):
+    return dict(parse_qsl((search or "").lstrip("?")))
+
+
+# ---- URL (on load) and All/None buttons set the controls ----
+@app.callback(
+    Output("subjects", "value"), Output("stat", "value"), Output("t1band", "value"),
+    Output("mode", "value"), Output("sel", "data"),
+    Input("url", "search"), Input("sel-all", "n_clicks"), Input("sel-none", "n_clicks"),
+    State("stat", "value"), State("t1band", "value"), State("mode", "value"),
+    State("sel", "data"), prevent_initial_call=False)
+def _from_url(search, _a, _n, stat, band, mode, sel):
+    trig = ctx.triggered_id
+    if trig == "sel-all":
+        return SUBJECTS, stat, band, mode, sel
+    if trig == "sel-none":
+        return [], stat, band, mode, sel
+    p = parse_params(_qs_to_dict(search))
+    included = [s for s in SUBJECTS if s not in p["exclude"]]
+    return included, p["stat"], p["band"], p["mode"], {"mac": p["mac"], "disc": p["disc"]}
+
+
+# ---- every control change rewrites the URL query string ----
+@app.callback(Output("url", "search"),
+              Input("subjects", "value"), Input("stat", "value"),
+              Input("t1band", "value"), Input("mode", "value"), Input("sel", "data"))
+def _to_url(included, stat, band, mode, sel):
+    excluded = tuple(sorted(set(SUBJECTS) - set(included or [])))
+    return "?" + serialize_params({"exclude": excluded, "stat": stat, "band": band,
+                                   "mac": sel["mac"], "disc": sel["disc"], "mode": mode})
 
 
 # ---- clicking a Fig 3 wedge or an averages row selects the Fig 2 sector ----
