@@ -108,6 +108,7 @@ GRAPH_CFG = lambda name, w, h: dict(
 
 app.layout = html.Div([
     dcc.Location(id="url", refresh=False),
+    dcc.Store(id="postbridge-dummy"),
     html.H1(["OCT – T", html.Sub("1"), " Correlation Figures"]),
     dcc.Store(id="sel", data={"mac": DEF_MAC, "disc": DEF_DISC}),
     html.Div(id="app", children=[
@@ -231,6 +232,29 @@ def _render(included, stat, sel_band, mode, sel):
             build_avg_table(view), count)
 
 
+# ---- postMessage bridge: emit this app's URL to the parent window (iframe host) ----
+# NOTE (deviation from task-7 brief): the brief's Step 1 snippet outputs to
+# Output("url", "search"), the same prop that `_to_url` above already writes.
+# Two callbacks writing the same Output raises DuplicateCallbackOutput, and
+# having url.search as BOTH the Input and Output of one callback additionally
+# risks a same-input-output error. This callback instead only *reads*
+# url.search (Input) and writes to a dedicated dummy dcc.Store
+# ("postbridge-dummy") that nothing else uses, returning no_update.
+app.clientside_callback(
+    """
+    function(search) {
+        if (window.parent && window.parent !== window) {
+            window.parent.postMessage(
+                {type: "opticnerve:state", search: search || ""}, "*");
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("postbridge-dummy", "data"),
+    Input("url", "search"),
+)
+
+
 # ---- dark theme (kept inline so the app stays a single file) ----
 app.index_string = """<!DOCTYPE html>
 <html><head>{%metas%}<title>{%title%}</title>{%favicon%}{%css%}
@@ -288,7 +312,20 @@ app.index_string = """<!DOCTYPE html>
   .avgtbl .aval.sig { color:#ff383c; }
   g.annotation rect { rx:6px; ry:6px; }
 </style></head>
-<body>{%app_entry%}<footer>{%config%}{%scripts%}{%renderer%}</footer></body></html>"""
+<body>{%app_entry%}<footer>
+<script>
+window.addEventListener("message", function (e) {
+  var d = e.data || {};
+  if (d.type !== "opticnerve:state") return;
+  // reflect into this app's URL so the normal _from_url callback runs
+  if (typeof d.search === "string" && d.search !== window.location.search) {
+    var url = window.location.pathname + d.search;
+    window.history.replaceState(null, "", url);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }
+});
+</script>
+{%config%}{%scripts%}{%renderer%}</footer></body></html>"""
 
 
 if __name__ == "__main__":

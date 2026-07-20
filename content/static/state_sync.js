@@ -80,4 +80,27 @@
     },
     _readParams: readParams, _broadcast: broadcast   // exposed for the bridge/tests
   };
+
+  // --- iframe bridge: relay between the same-page bus and the Dash iframe ---
+  const ALLOW = (window.OPTICNERVE_DASH_ORIGIN || "").replace(/\/$/, "");
+  function dashFrame() { return document.querySelector('iframe[data-opticnerve-dash]'); }
+
+  // bus change -> tell the iframe
+  window.addEventListener("opticnerve:state", e => {
+    const f = dashFrame();
+    if (f && f.contentWindow) {
+      f.contentWindow.postMessage(
+        {type: "opticnerve:state", search: "?" + serialize(e.detail)}, ALLOW || "*");
+    }
+  });
+  // iframe change -> drive the bus
+  window.addEventListener("message", e => {
+    if (ALLOW && e.origin !== ALLOW) return;         // origin allow-check
+    const d = e.data || {};
+    if (d.type !== "opticnerve:state" || typeof d.search !== "string") return;
+    const q = new URLSearchParams(d.search.replace(/^\?/, "")), p = {};
+    ORDER.forEach(k => { p[k] = q.has(k) ? q.get(k) : DEF[k]; });
+    const cur = readParams();
+    if (!equal(cur, p)) broadcast(p);
+  });
 })();
