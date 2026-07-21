@@ -18,7 +18,7 @@ Deploy:        gunicorn Dash_client:server  (see render.yaml)
 
 import numpy as np
 
-from dash import Dash, dcc, html, Input, Output, State, ctx, ALL
+from dash import Dash, dcc, html, Input, Output, State, ctx, ALL, no_update
 
 from opticnerve_core import (
     T1_BANDS, DEF_MAC, DEF_DISC, MAC_AVG, DISC_AVG, SUBJECTS, stat_val,
@@ -294,7 +294,6 @@ def _from_url(search, _a, _n, stat, band, mode, sel):
               Input({"type": "avgrow", "metric": ALL, "region": ALL}, "n_clicks"),
               State("sel", "data"), prevent_initial_call=True)
 def _select_sector(click, _rows, sel):
-    sel = dict(sel)
     trig = ctx.triggered_id
     metric, region = None, None
     if trig == "fig3" and click and click.get("points"):
@@ -307,10 +306,20 @@ def _select_sector(click, _rows, sel):
         else:
             metric = None
     elif isinstance(trig, dict) and trig.get("type") == "avgrow":
-        metric, region = trig["metric"], trig["region"]
-    if metric:                                   # toggle: click the selected one to reset
-        default = DEF_MAC if region == "mac" else DEF_DISC
-        sel[region] = default if sel[region] == metric else metric
+        # only a genuine row click counts (n_clicks>0); ignore the n_clicks=0
+        # firings when _render rebuilds the averages table, which would otherwise
+        # spuriously toggle the selection.
+        trigval = ctx.triggered[0]["value"] if ctx.triggered else None
+        if trigval:
+            metric, region = trig["metric"], trig["region"]
+    # No genuine selection (e.g. clickData reset to None on re-render, or a table
+    # rebuild): do NOT rewrite sel — returning it would race _from_url and clobber
+    # a sector absorbed from the BroadcastChannel. Leave sel untouched.
+    if not metric:
+        return no_update
+    sel = dict(sel)
+    default = DEF_MAC if region == "mac" else DEF_DISC
+    sel[region] = default if sel[region] == metric else metric
     return sel
 
 
