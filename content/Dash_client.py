@@ -252,30 +252,48 @@ GRAPH_CFG = lambda name, w, h: dict(
                             "zoomOut2d", "autoScale2d", "resetScale2d"],
     toImageButtonOptions=dict(format="png", filename=name, width=w, height=h, scale=600 / 96))
 
+# One option per checkbox, interleaved subject / OD / OS so a 3-column CSS grid
+# lays them out as one row per subject. Values are exactly the exclusion tokens
+# parse_params understands: bare = whole subject, dotted = one eye.
+SUBJ_OPTIONS = []
+for _s in SUBJECTS:
+    SUBJ_OPTIONS.append({"label": _s, "value": _s})
+    SUBJ_OPTIONS += [{"label": _e, "value": f"{_s}{EYE_SEP}{_e}"} for _e in EYES_OF[_s]]
+ALL_TOKENS = tuple(o["value"] for o in SUBJ_OPTIONS)
+
 app.layout = html.Div(id="root", children=[
     dcc.Location(id="url", refresh=False),
     dcc.Store(id="postbridge-dummy"),
-    dcc.Store(id="all-subjects", data=SUBJECTS),   # for the clientside URL writer
-    dcc.Store(id="all-eyes", data=list(ALL_EYES)),
+    dcc.Store(id="all-tokens", data=list(ALL_TOKENS)),   # for the clientside URL writer
     html.H1(["OCT – T", html.Sub("1"), " Correlation Figures"]),
     dcc.Store(id="sel", data={"mac": DEF_MAC, "disc": DEF_DISC}),
     html.Div(id="app", children=[
-        # ---- sidebar ----
+      # ---- one fixed-size stage holding the figures AND the sidebar, scaled
+      # to fit by fitStage() below ----
+      html.Div(id="stagewrap", children=[
+       html.Div(id="figures", children=[
+        html.Div(className="leftcol", children=[
+            html.Section(className="figpanel", children=[
+                dcc.Graph(id="fig1", config=GRAPH_CFG("fig01_T1_profile", *FIG_SIZE["fig1"]))]),
+            html.Section(className="figpanel statpanel", children=[html.Div(id="avgbox")]),
+        ]),
+        html.Div(className="rightcol", children=[
+            html.Section(className="figpanel", children=[
+                dcc.Graph(id="fig2", config=GRAPH_CFG("fig02_regression", *FIG_SIZE["fig2"]))]),
+            html.Section(className="figpanel", children=[
+                dcc.Graph(id="fig3", config=GRAPH_CFG("fig03_OCT_maps", *FIG_SIZE["fig3"]))]),
+        ]),
+        # sidebar last: scales with the figures, and stretches to exactly
+        # fig2 + gap + fig3 tall
         html.Aside(id="sidebar", children=[
             html.H3("Subjects"),
-            html.Div("Uncheck a subject to remove both its eyes from every figure. "
-                     "Or click a point in Figure 2.", className="hint"),
+            html.Div(id="subjhint", className="hint"),
             html.Div([html.Button("All", id="sel-all"), html.Button("None", id="sel-none")],
                      className="btnrow"),
-            dcc.Checklist(id="subjects", options=[{"label": s, "value": s} for s in SUBJECTS],
-                          value=SUBJECTS, className="subjlist"),
-            html.Hr(),
-            html.H3("Single eyes"),
-            html.Div("Drops one eye only — changes the LME directly, and the "
-                     "average of that subject in OLS.", className="hint"),
-            dcc.Checklist(id="eyes", value=list(ALL_EYES), className="subjlist eyelist",
-                          options=[{"label": t.replace(EYE_SEP, " "), "value": t}
-                                   for t in ALL_EYES]),
+            html.Div([html.Span(""), html.Span("OD"), html.Span("OS")],
+                     id="subjhdr", className=f"subjhdr {DEFAULTS['mode']}"),
+            dcc.Checklist(id="subjects", options=SUBJ_OPTIONS, value=list(ALL_TOKENS),
+                          className=f"subjlist {DEFAULTS['mode']}"),
             html.Div(id="ncount", className="ncount"),
             html.Hr(),
             html.Div("Statistic", className="lbl"),
@@ -293,26 +311,8 @@ app.layout = html.Div(id="root", children=[
             html.Hr(),
             html.Div([html.Button("Reset all", id="reset")], className="btnrow"),
         ]),
-        # ---- figures: a fixed-size stage, scaled to fit by fitStage() below ----
-        html.Div(id="stagewrap", children=[
-            html.Div(id="figures", children=[
-                html.Div(className="leftcol", children=[
-                    html.Section(className="figpanel", children=[
-                        dcc.Graph(id="fig1",
-                                  config=GRAPH_CFG("fig01_T1_profile", *FIG_SIZE["fig1"]))]),
-                    html.Section(className="figpanel statpanel", children=[
-                        html.Div(id="avgbox")]),
-                ]),
-                html.Div(className="rightcol", children=[
-                    html.Section(className="figpanel", children=[
-                        dcc.Graph(id="fig2",
-                                  config=GRAPH_CFG("fig02_regression", *FIG_SIZE["fig2"]))]),
-                    html.Section(className="figpanel", children=[
-                        dcc.Graph(id="fig3",
-                                  config=GRAPH_CFG("fig03_OCT_maps", *FIG_SIZE["fig3"]))]),
-                ]),
-            ]),
-        ]),
+       ]),
+      ]),
     ]),
 ])
 
@@ -324,18 +324,21 @@ def _qs_to_dict(search):
     return dict(parse_qsl((search or "").lstrip("?")))
 
 
-def _excluded(inc_subj, inc_eyes):
-    """The two checklists -> one canonical `exclude` tuple (see parse_params).
-    They are independent: a point is out if its subject OR its eye is unchecked.
-    Keeping both spellings apart is what makes the URL round-trip exactly."""
-    inc_subj, inc_eyes = set(inc_subj or []), set(inc_eyes or [])
-    return tuple(sorted([s for s in SUBJECTS if s not in inc_subj]
-                        + [t for t in ALL_EYES if t not in inc_eyes]))
+def _excluded(included):
+    """Checklist value -> canonical `exclude` tuple (see parse_params). A point
+    is out if its subject box OR its own eye box is unchecked."""
+    included = set(included or [])
+    return tuple(sorted(t for t in ALL_TOKENS if t not in included))
+
+
+def _included(exclude):
+    ex = set(exclude)
+    return [t for t in ALL_TOKENS if t not in ex]
 
 
 # ---- URL (on load), All/None and Reset set the controls ----
 @app.callback(
-    Output("subjects", "value"), Output("eyes", "value"), Output("stat", "value"),
+    Output("subjects", "value"), Output("stat", "value"),
     Output("t1band", "value"), Output("mode", "value"), Output("sel", "data"),
     Input("url", "search"), Input("sel-all", "n_clicks"), Input("sel-none", "n_clicks"),
     Input("reset", "n_clicks"),
@@ -344,45 +347,61 @@ def _excluded(inc_subj, inc_eyes):
 def _from_url(search, _a, _n, _r, stat, band, mode, sel):
     trig = ctx.triggered_id
     if trig == "sel-all":
-        return SUBJECTS, list(ALL_EYES), stat, band, mode, sel
+        return list(ALL_TOKENS), stat, band, mode, sel
     if trig == "sel-none":
-        return [], [], stat, band, mode, sel
+        return [], stat, band, mode, sel
     if trig == "reset":
-        return (SUBJECTS, list(ALL_EYES), DEFAULTS["stat"], DEFAULTS["band"],
+        return (list(ALL_TOKENS), DEFAULTS["stat"], DEFAULTS["band"],
                 DEFAULTS["mode"], {"mac": DEF_MAC, "disc": DEF_DISC})
     p = parse_params(_qs_to_dict(search))
-    ex = set(p["exclude"])
-    return ([s for s in SUBJECTS if s not in ex], [t for t in ALL_EYES if t not in ex],
-            p["stat"], p["band"], p["mode"], {"mac": p["mac"], "disc": p["disc"]})
+    return (_included(p["exclude"]), p["stat"], p["band"], p["mode"],
+            {"mac": p["mac"], "disc": p["disc"]})
+
+
+# ---- the panel shows only the level the active model can express: one box per
+# SUBJECT for OLS (a point is a subject), one per EYE for the LME (a point is an
+# eye). On a mode switch the state is translated to the visible level so the
+# hidden one can never silently affect a fit: subject-out becomes both-eyes-out
+# going to LME, and any-eye-out becomes subject-out going to OLS.
+@app.callback(Output("subjects", "value", allow_duplicate=True),
+              Output("subjects", "className"), Output("subjhdr", "className"),
+              Output("subjhint", "children"),
+              Input("mode", "value"), State("subjects", "value"),
+              prevent_initial_call="initial_duplicate")
+def _mode_granularity(mode, included):
+    inc, value = set(included or []), []
+    for s in SUBJECTS:
+        eyes = [f"{s}{EYE_SEP}{e}" for e in EYES_OF[s]]
+        if mode == "avg":
+            value += ([s] if s in inc and all(e in inc for e in eyes) else []) + eyes
+        else:
+            value += [s] + [e for e in eyes if e in inc and s in inc]
+    hint = ("Uncheck a subject to drop it" if mode == "avg" else
+            "Uncheck an eye to drop it") + " — or click its point in Figure 2."
+    return sorted(value), f"subjlist {mode}", f"subjhdr {mode}", hint
 
 
 # ---- clicking a Figure 2 point drops it from the analysis (click again to
 # restore). Average mode toggles the whole subject (one point = one subject),
-# LME mode toggles that eye. Both checklists are duplicate outputs of _from_url.
+# LME mode toggles that eye. Duplicate output of _from_url.
 @app.callback(Output("subjects", "value", allow_duplicate=True),
-              Output("eyes", "value", allow_duplicate=True),
               Input("fig2", "clickData"), State("mode", "value"),
-              State("subjects", "value"), State("eyes", "value"),
-              prevent_initial_call=True)
-def _toggle_point(click, mode, inc_subj, inc_eyes):
+              State("subjects", "value"), prevent_initial_call=True)
+def _toggle_point(click, mode, included):
     pts = (click or {}).get("points") or []
     cd = pts[0].get("customdata") if pts else None
     if not isinstance(cd, (list, tuple)) or len(cd) < 3:
-        return no_update, no_update          # regression line, or clickData reset
+        return no_update                     # regression line, or clickData reset
     subj, tok, ghost = cd[0], cd[1], cd[2]
-    inc_subj, inc_eyes = list(inc_subj or []), list(inc_eyes or [])
-    if ghost:                                # put it back: clear BOTH levels that
-        if subj not in inc_subj:             # could be keeping it out
-            inc_subj.append(subj)
-        for e in EYES_OF[subj]:
-            t = f"{subj}{EYE_SEP}{e}"
-            if tok in (subj, t) and t not in inc_eyes:
-                inc_eyes.append(t)
-    elif mode == "avg":
-        inc_subj = [s for s in inc_subj if s != tok]
+    included = list(included or [])
+    if ghost:                                # put it back: clear every box that
+        back = {subj} | {f"{subj}{EYE_SEP}{e}" for e in EYES_OF[subj]   # could be
+                         if tok in (subj, f"{subj}{EYE_SEP}{e}")}       # keeping it out
+        included += [t for t in back if t not in included]
     else:
-        inc_eyes = [t for t in inc_eyes if t != tok]
-    return sorted(inc_subj), sorted(inc_eyes)
+        drop = subj if mode == "avg" else tok
+        included = [t for t in included if t != drop]
+    return sorted(included)
 
 
 # NOTE: writing the URL is done CLIENTSIDE (see the push-out callback near the
@@ -436,13 +455,13 @@ def _select_sector(click, _rows, sel):
 @app.callback(
     Output("fig1", "figure"), Output("fig2", "figure"), Output("fig3", "figure"),
     Output("avgbox", "children"), Output("ncount", "children"),
-    Input("subjects", "value"), Input("eyes", "value"), Input("stat", "value"),
+    Input("subjects", "value"), Input("stat", "value"),
     Input("t1band", "value"), Input("mode", "value"), Input("sel", "data"))
-def _render(inc_subj, inc_eyes, stat, sel_band, mode, sel):
-    view = resolve_view(exclude=_excluded(inc_subj, inc_eyes), stat=stat, band=sel_band,
+def _render(included, stat, sel_band, mode, sel):
+    view = resolve_view(exclude=_excluded(included), stat=stat, band=sel_band,
                         mac=sel["mac"], disc=sel["disc"], mode=mode)
-    count = (f"{view['n']} / {len(SUBJECTS)} subjects · "
-             f"{view['n_eyes']} / {len(ALL_EYES)} eyes included")
+    count = (f"{view['n']}/{len(SUBJECTS)} subjects · "
+             f"{view['n_eyes']}/{len(ALL_EYES)} eyes")
     return (build_fig1(view), build_fig2(view), build_fig3(view),
             build_avg_table(view), count)
 
@@ -455,13 +474,10 @@ def _render(inc_subj, inc_eyes, stat, sel_band, mode, sel):
 # store. exclude is derived from the full subject list (all-subjects store).
 app.clientside_callback(
     """
-    function(incSubj, incEyes, stat, band, mode, sel, allSubjects, allEyes) {
-        // must match _excluded() in the Python: union of the two checklists,
-        // subject tokens and eye tokens kept distinct, sorted.
-        var is = incSubj || [], ie = incEyes || [];
-        var excl = (allSubjects || []).filter(function (s) { return is.indexOf(s) === -1; })
-            .concat((allEyes || []).filter(function (t) { return ie.indexOf(t) === -1; }))
-            .sort();
+    function(included, stat, band, mode, sel, allTokens) {
+        // must match _excluded() in the Python: every unchecked token, sorted.
+        var inc = included || [];
+        var excl = (allTokens || []).filter(function (t) { return inc.indexOf(t) === -1; }).sort();
         var params = {exclude: excl.join(","), stat: stat, band: band,
                       mac: (sel || {}).mac, disc: (sel || {}).disc, mode: mode};
         var ORDER = ["exclude", "stat", "band", "mac", "disc", "mode"];
@@ -484,9 +500,9 @@ app.clientside_callback(
     }
     """,
     Output("postbridge-dummy", "data"),
-    Input("subjects", "value"), Input("eyes", "value"), Input("stat", "value"),
+    Input("subjects", "value"), Input("stat", "value"),
     Input("t1band", "value"), Input("mode", "value"), Input("sel", "data"),
-    State("all-subjects", "data"), State("all-eyes", "data"),
+    State("all-tokens", "data"),
     prevent_initial_call=True,
 )
 
@@ -506,16 +522,15 @@ app.index_string = """<!DOCTYPE html>
      viewport, without this file having to know Dash's internal div names. */
   #root { position:fixed; inset:0; display:flex; flex-direction:column; }
   h1 { flex:0 0 auto; text-align:center; font-size:22px; margin:14px 0 8px; }
-  /* row-reverse puts the sidebar on the RIGHT while keeping the controls first
-     in the DOM (so keyboard/screen-reader order stays controls -> figures). */
-  #app { flex:1 1 auto; min-height:0; display:flex; flex-direction:row-reverse;
-    align-items:stretch; gap:16px; padding:0 16px 16px; }
-  #sidebar { width:210px; flex:0 0 210px; background:#1e1e1e; border-radius:6px;
-    padding:14px; min-height:0; overflow-y:auto; }
+  #app { flex:1 1 auto; min-height:0; display:flex; padding:0 16px 16px; }
+  /* no height of its own: as a flex child of the stage it stretches to the
+     stage's 626px, i.e. exactly fig2 + gap + fig3, and scales with it. */
+  #sidebar { flex:0 0 210px; background:#1e1e1e; border-radius:6px;
+    padding:14px; overflow-y:auto; }
   #sidebar h3 { margin:0 0 8px; font-size:16px; }
-  #sidebar .hint { font-size:12px; color:#999; margin-bottom:10px; line-height:1.4; }
-  #sidebar .lbl { font-size:14px; color:#aaa; margin-bottom:6px; }
-  #sidebar hr { border:none; border-top:1px solid #333; margin:14px 0 12px; }
+  #sidebar .hint { font-size:11px; color:#999; margin-bottom:8px; line-height:1.35; }
+  #sidebar .lbl { font-size:13px; color:#aaa; margin-bottom:4px; }
+  #sidebar hr { border:none; border-top:1px solid #333; margin:6px 0 5px; }
   .btnrow { display:flex; gap:6px; margin-bottom:8px; }
   .btnrow button { flex:1; background:#2a2a2a; color:#ddd; border:1px solid #444;
     border-radius:4px; padding:4px; font-size:12px; cursor:pointer; }
@@ -524,13 +539,27 @@ app.index_string = """<!DOCTYPE html>
   .subjlist label,
   #stat label, #mode label,
   #t1band, #t1band * { font-size:12px; }
-  .subjlist label { display:flex; align-items:center; padding:1px 0; cursor:pointer; color:#9ecbff; }
-  .subjlist input { margin-right:7px; }
-  .eyelist { display:grid; grid-template-columns:1fr 1fr; column-gap:4px; }
+  /* one row per subject: the checklist's options are interleaved
+     subject / OD / OS, so a 3-column grid lines them up. */
+  .subjlist { display:grid; grid-template-columns:1fr 38px 38px; grid-auto-rows:16px;
+    align-items:center; }
+  .subjlist label { display:flex; align-items:center; cursor:pointer; color:#9ecbff; }
+  .subjlist input { width:12px; height:12px; margin:0 5px 0 0; }
+  .subjhdr { display:grid; grid-template-columns:1fr 38px 38px; font-size:10px;
+    color:#777; text-transform:uppercase; letter-spacing:.5px; margin-bottom:2px; }
+  .subjhdr span { padding-left:15px; }
+  /* OLS: subject boxes only (a point is a subject). The 3n+2/3n children are
+     the OD/OS boxes of each row. */
+  .subjhdr.avg { display:none; }
+  .subjlist.avg { grid-template-columns:1fr; }
+  .subjlist.avg label:nth-child(3n+2), .subjlist.avg label:nth-child(3n) { display:none; }
+  /* LME: eye boxes only; column 1 keeps the name, as inert text. */
+  .subjlist.lme label:nth-child(3n+1) { pointer-events:none; color:#bbb; }
+  .subjlist.lme label:nth-child(3n+1) input { display:none; }
   #stat label { display:inline-flex; align-items:center; color:#ddd; margin-right:18px; cursor:pointer; }
   #mode label { display:flex; align-items:center; color:#ddd; margin-bottom:5px; cursor:pointer; }
   #stat input, #mode input { margin-right:7px; flex-shrink:0; }
-  .ncount { font-size:12px; color:#7fd17f; margin-top:8px; }
+  .ncount { font-size:12px; color:#7fd17f; margin-top:4px; }
   #sidebar .dash-dropdown { color:#111; }
   /* The figure area is ONE fixed 1249x626 canvas (see the size table in
      fitStage below) that fitStage() scales to fit #stagewrap, like squeezing a
@@ -539,9 +568,9 @@ app.index_string = """<!DOCTYPE html>
   #stagewrap { flex:1 1 auto; min-width:0; min-height:0; position:relative; overflow:hidden; }
   /*  575 = fig1 555 + 2x10 panel padding     658 = fig2/3 638 + 2x10
       626 = (402+20) + 16 gap + 188 table  ==  (285+20) + 16 + (285+20)
-     1249 = 575 + 16 gap + 658                 <- the two columns agree exactly */
+     1475 = 575 + 16 + 658 + 16 + 210 sidebar  <- both columns agree exactly */
   #figures { position:absolute; top:50%; left:50%; transform-origin:center;
-    width:1249px; height:626px; display:flex; gap:16px; }
+    width:1475px; height:626px; display:flex; gap:16px; }
   .leftcol, .rightcol { display:flex; flex-direction:column; gap:16px; }
   .figpanel { background:#fff; border-radius:6px; padding:10px;
     box-shadow:0 1px 4px rgba(0,0,0,.4); }
@@ -609,7 +638,7 @@ app.index_string = """<!DOCTYPE html>
   // any scale and never re-measure. This replaces the old per-figure resize
   // relayout, which was also the only thing Fig 3's equal-aspect subplots could
   // get stuck on.
-  var NATIVE_W = 1249, NATIVE_H = 626;
+  var NATIVE_W = 1475, NATIVE_H = 626;
   function fitStage() {
     var wrap = document.getElementById('stagewrap');
     var stage = document.getElementById('figures');

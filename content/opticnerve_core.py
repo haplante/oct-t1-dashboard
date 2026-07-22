@@ -319,6 +319,12 @@ def build_fig1(view):
 # ============================================================================
 # FIGURE 2 — correlation with 4 regression lines per panel
 # ============================================================================
+F2_LABEL_SIZE = 10
+F2_LABEL_BOLD = False
+F2_LABEL_DX = 10
+F2_LABEL_DY = 8
+
+
 def _cdata(subj, eye, ghost):
     """Per-point customdata rows: [label, exclusion token, ghost flag].
 
@@ -380,31 +386,43 @@ def build_fig2(view):
                     hovertemplate=hov(" · excluded", "click → put back"),
                     hoverlabel=dict(bgcolor="#222", font=dict(color="#fff")))
             xs = np.array([x.min(), x.max()])
+            ys = r["b0"] + r["b1"] * xs
             star = " *" if (not np.isnan(q) and q < 0.05) else ""
-            fig.add_scatter(x=xs, y=r["b0"] + r["b1"] * xs, mode="lines", legend=leg,
+            name = f"{lbl.replace(' mm','')} ({stat_lbl(stat)}={fmt2(stat_val(r, stat))}){star}"
+            fig.add_scatter(x=xs, y=ys, mode="lines", legend=leg,
                 legendgroup=grp, visible=vis, row=1, col=col, line=dict(color=c, width=2),
-                hoverinfo="skip", name=f"{lbl.replace(' mm','')} ({stat_lbl(stat)}={fmt2(stat_val(r, stat))}){star}")
+                hoverinfo="skip", name=name)
+            if vis is True:
+                fig.add_annotation(x=xs[0], y=ys[0], row=1, col=col,
+                    text=f"<b>{name}</b>" if F2_LABEL_BOLD else name, showarrow=False,
+                    xanchor="left", yanchor="bottom", xshift=F2_LABEL_DX, yshift=F2_LABEL_DY,
+                    font=dict(size=F2_LABEL_SIZE, color=c),
+                    bgcolor="rgba(255,255,255,0.7)", borderpad=1)
         # grey dotted reference: default sector at the selected band (only when a
         # non-default sector is selected) — lets you compare against the baseline.
         ref = panel.get("ref")
         if ref:
             rx = np.array([min(ref["x"]), max(ref["x"])])
-            fig.add_scatter(x=rx, y=ref["b0"] + ref["b1"] * rx, mode="lines", legend=leg,
+            ry = ref["b0"] + ref["b1"] * rx
+            rname = (f"{BAND_LABEL[sel_band].replace(' mm','')} "
+                     f"{sector_name(panel['default_sector']).split(' (')[0]}")
+            fig.add_scatter(x=rx, y=ry, mode="lines", legend=leg,
                 row=1, col=col, line=dict(color="#999", width=1.5, dash="dot"),
-                hoverinfo="skip",
-                name=f"{BAND_LABEL[sel_band].replace(' mm','')} {sector_name(panel['default_sector']).split(' (')[0]}")
+                hoverinfo="skip", name=rname)
+            # labelled at the RIGHT end so it cannot land on the band label above
+            fig.add_annotation(x=rx[1], y=ry[1], row=1, col=col,
+                text=f"<b>{rname}</b>" if F2_LABEL_BOLD else rname, showarrow=False,
+                xanchor="right", yanchor="top", xshift=-F2_LABEL_DX, yshift=-F2_LABEL_DY,
+                font=dict(size=F2_LABEL_SIZE, color="#999"),
+                bgcolor="rgba(255,255,255,0.7)", borderpad=1)
         fig.update_xaxes(title=dict(text=xlab, standoff=5), row=1, col=col, **AX)
         fig.update_yaxes(title=dict(text=y_title), row=1, col=col, **AX)
 
-    leg_style = dict(bgcolor="rgba(255,255,255,0.7)", bordercolor="#ccc", borderwidth=1,
-                     font=dict(size=10), xanchor="right", yanchor="top", y=0.99,
-                     groupclick="togglegroup", tracegroupgap=0, itemwidth=30)
     fig.update_layout(**_canvas("fig2"), paper_bgcolor="white", plot_bgcolor="white",
-        dragmode=False,
+        dragmode=False, showlegend=False,
         font=dict(color="black", family="DejaVu Sans, Arial, sans-serif", size=13),
-        margin=dict(l=70, r=10, t=40, b=45),
-        legend=dict(**leg_style, x=0.43), legend2=dict(**leg_style, x=0.99))
-    for a in fig.layout.annotations:
+        margin=dict(l=70, r=10, t=40, b=45))
+    for a in fig.layout.annotations[:2]:      # the two subplot titles only
         a.font.size = 15
     return fig
 
