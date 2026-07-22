@@ -1,4 +1,4 @@
-{ "src": "https://raw.githubusercontent.com/plotly/datasets/master/hobbs-pearson-trials.csv",
+{ "src": "https://drive.google.com/uc?id=1rTKd0Hf7_uowADlbfODmABBSiRwOM6Ld",
   "dst": "../data",
-  "projectName": "neurolibre-demo-dataset"
+  "projectName": "opticnerve-data"
 }

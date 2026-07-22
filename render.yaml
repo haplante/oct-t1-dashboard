@@ -1,0 +1,10 @@
+# Render Blueprint — connect this repo at https://dashboard.render.com/blueprints
+# and Render auto-creates the web service below (no manual settings needed).
+services:
+  - type: web
+    name: oct-t1-dashboard
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt && python binder/fetch_data.py
+    startCommand: gunicorn --chdir content Dash_client:server
+    autoDeploy: true

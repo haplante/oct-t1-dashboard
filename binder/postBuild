@@ -1,0 +1,3 @@
+#!/bin/bash
+set -e
+python "$(dirname "$0")/fetch_data.py"

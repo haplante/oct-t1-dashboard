@@ -38,7 +38,11 @@ jobs:
         run: |
           python -m venv venv
           source venv/bin/activate
-          pip install -r binder/requirements.txt        
+          pip install -r binder/requirements.txt
+      - name: Fetch data
+        run: |
+          source venv/bin/activate
+          python binder/fetch_data.py
       - uses: actions/setup-node@v4
         with:
           node-version: 18.x
