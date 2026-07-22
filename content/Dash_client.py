@@ -23,7 +23,7 @@ from dash import Dash, dcc, html, Input, Output, State, ctx, ALL, no_update
 from opticnerve_core import (
     T1_BANDS, DEF_MAC, DEF_DISC, MAC_AVG, DISC_AVG, SUBJECTS, stat_val,
     stat_lbl, resolve_view, DEFAULTS, build_fig1, build_fig2, build_fig3,
-    parse_params, serialize_params,
+    parse_params, serialize_params, ALL_EYES, EYES_OF, EYE_SEP,
 )
 
 
@@ -84,6 +84,19 @@ CORS(server, resources={r"/opticnerve/*": {"origins": "*"}})
 
 _BUILDERS = {"fig1": build_fig1, "fig2": build_fig2, "fig3": build_fig3}
 
+# Native pixel canvas each standalone /figure/<figid> page renders at (no
+# autosize/responsive). paper.md scales this down visually with a CSS
+# transform to fit the article column — see the per-figure scale factors
+# there, which must be recomputed (720 / width) if these change.
+FIG_NATIVE_SIZE = {"fig1": (555, 402), "fig2": (638, 285), "fig3": (638, 285)}
+
+# PNG size for each standalone figure's own "download as png" modebar button
+# (independent of FIG_NATIVE_SIZE / the on-screen paper.md scale). Edit these
+# to change what gets downloaded; scale is the extra DPI multiplier (600/96
+# matches the dashboard's own GRAPH_CFG export resolution).
+PNG_EXPORT_SIZE = {"fig1": (555, 402), "fig2": (638, 285), "fig3": (638, 285)}
+PNG_EXPORT_SCALE = 600 / 96
+
 
 @server.route("/opticnerve/<figid>")
 def opticnerve(figid):
@@ -112,11 +125,26 @@ _FIG_CLIENT = r"""
 (function () {
   "use strict";
   var FIGID = "__FIGID__";
+  var NATIVE_W = __FIGW__, NATIVE_H = __FIGH__;
+  var PNG_W = __PNGW__, PNG_H = __PNGH__, PNG_SCALE = __PNGSCALE__;
   var ORDER = ["exclude","stat","band","mac","disc","mode"];
   var DEF = {exclude:"",stat:"R2m",band:"T1_mean_015",mac:"All_1_3_gcc",disc:"All_um_",mode:"avg"};
   var API = window.location.origin;
   var bc = ("BroadcastChannel" in window) ? new BroadcastChannel("opticnerve") : null;
   var applying = false, last = null;
+  // MyST's theme forces every embedded <iframe> into its own responsive box
+  // (fixed padding-bottom aspect ratio, ignoring any width/height we author),
+  // so we can't control the iframe's size from paper.md. Instead the figure
+  // renders at a fixed native pixel canvas (crisp, like a static image) and
+  // this page scales that canvas to fit whatever box the theme actually gave
+  // it, the same way object-fit:contain would for an <img>.
+  function fitStage() {
+    var scale = Math.min(window.innerWidth / NATIVE_W, window.innerHeight / NATIVE_H);
+    var stage = document.getElementById("stage");
+    stage.style.transform = "translate(-50%, -50%) scale(" + scale + ")";
+  }
+  window.addEventListener("resize", fitStage);
+  fitStage();
   function readParams() {
     var q = new URLSearchParams(window.location.search), p = {};
     ORDER.forEach(function (k) { p[k] = q.has(k) ? q.get(k) : DEF[k]; });
@@ -130,8 +158,15 @@ _FIG_CLIENT = r"""
     return fetch(API + "/opticnerve/" + FIGID + "?" + serialize(p))
       .then(function (r) { return r.json(); })
       .then(function (j) {
-        Plotly.react("fig", j.figure.data, j.figure.layout,
-                     {responsive:true, displaylogo:false});
+        // Fixed native canvas, no responsive/autosize: paper.md scales the
+        // whole page visually via CSS transform instead, like a PNG would be,
+        // so Plotly never needs to re-measure or redraw on resize.
+        return Plotly.react("fig", j.figure.data, j.figure.layout,
+                            {responsive:false, displaylogo:false,
+                             toImageButtonOptions:{format:"png", filename:FIGID,
+                                                   width:PNG_W, height:PNG_H, scale:PNG_SCALE}});
+      })
+      .then(function () {
         last = p; wireClicks();
       })
       .catch(function (e) {
@@ -180,9 +215,17 @@ _FIG_PAGE = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OCT-T1 __FIGID__</title>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
-<style>html,body{margin:0;height:100%;background:#fff}
-#fig{width:100%;height:100%}</style></head>
-<body><div id="fig"></div>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#fff}
+#stage{position:absolute;top:50%;left:50%;width:__FIGW__px;height:__FIGH__px;
+  transform-origin:center;}
+#fig{width:100%;height:100%}
+/* Keep in sync with the same rule in app.index_string below. Plotly has no
+   layout option for rounded annotation backgrounds, so the Fig 3 stat chips get
+   their rounded corners from CSS on the SVG <rect>. This page has its own
+   <style> and does not inherit the dashboard's, so without this the chips
+   render square in paper.md while the dashboard shows them rounded. */
+g.annotation rect{rx:6px;ry:6px}</style></head>
+<body><div id="stage"><div id="fig"></div></div>
 <script>__CLIENT__</script>
 </body></html>"""
 
@@ -191,8 +234,15 @@ _FIG_PAGE = """<!doctype html>
 def figure_page(figid):
     if figid not in _BUILDERS:
         abort(404)
-    page = (_FIG_PAGE.replace("__CLIENT__", _FIG_CLIENT.replace("__FIGID__", figid))
-            .replace("__FIGID__", figid))
+    w, h = FIG_NATIVE_SIZE[figid]
+    pw, ph = PNG_EXPORT_SIZE[figid]
+    client = (_FIG_CLIENT.replace("__FIGID__", figid)
+              .replace("__FIGW__", str(w)).replace("__FIGH__", str(h))
+              .replace("__PNGW__", str(pw)).replace("__PNGH__", str(ph))
+              .replace("__PNGSCALE__", str(PNG_EXPORT_SCALE)))
+    page = (_FIG_PAGE.replace("__CLIENT__", client)
+            .replace("__FIGID__", figid)
+            .replace("__FIGW__", str(w)).replace("__FIGH__", str(h)))
     return server.response_class(page, mimetype="text/html")
 
 GRAPH_CFG = lambda name, w, h: dict(
@@ -205,17 +255,26 @@ app.layout = html.Div([
     dcc.Location(id="url", refresh=False),
     dcc.Store(id="postbridge-dummy"),
     dcc.Store(id="all-subjects", data=SUBJECTS),   # for the clientside URL writer
+    dcc.Store(id="all-eyes", data=list(ALL_EYES)),
     html.H1(["OCT – T", html.Sub("1"), " Correlation Figures"]),
     dcc.Store(id="sel", data={"mac": DEF_MAC, "disc": DEF_DISC}),
     html.Div(id="app", children=[
         # ---- sidebar ----
         html.Aside(id="sidebar", children=[
             html.H3("Subjects"),
-            html.Div("Uncheck a subject to remove it from every figure.", className="hint"),
+            html.Div("Uncheck a subject to remove both its eyes from every figure. "
+                     "Or click a point in Figure 2.", className="hint"),
             html.Div([html.Button("All", id="sel-all"), html.Button("None", id="sel-none")],
                      className="btnrow"),
             dcc.Checklist(id="subjects", options=[{"label": s, "value": s} for s in SUBJECTS],
                           value=SUBJECTS, className="subjlist"),
+            html.Hr(),
+            html.H3("Single eyes"),
+            html.Div("Drops one eye only — changes the LME directly, and the "
+                     "average of that subject in OLS.", className="hint"),
+            dcc.Checklist(id="eyes", value=list(ALL_EYES), className="subjlist eyelist",
+                          options=[{"label": t.replace(EYE_SEP, " "), "value": t}
+                                   for t in ALL_EYES]),
             html.Div(id="ncount", className="ncount"),
             html.Hr(),
             html.Div("Statistic", className="lbl"),
@@ -230,22 +289,24 @@ app.layout = html.Div([
             dcc.RadioItems(id="mode", value=DEFAULTS["mode"],
                            options=[{"label": " Average + OLS", "value": "avg"},
                                     {"label": " LME (per-eye, marginal T₁)", "value": "lme"}]),
+            html.Hr(),
+            html.Div([html.Button("Reset all", id="reset")], className="btnrow"),
         ]),
         # ---- figures ----
         html.Div(id="figures", children=[
             html.Div(className="leftcol", children=[
                 html.Section(className="figpanel", children=[
                     dcc.Graph(id="fig1", style={"height": "100%"},
-                              config=GRAPH_CFG("fig01_T1_profile", 864, 360))]),
+                              config=GRAPH_CFG("fig01_T1_profile", 555, 402))]),
                 html.Section(className="figpanel statpanel", children=[
                     html.Div(id="avgbox")]),
             ]),
             html.Section(className="figpanel fig2", children=[
                 dcc.Graph(id="fig2", style={"height": "100%"},
-                          config=GRAPH_CFG("fig02_regression", 936, 408))]),
+                          config=GRAPH_CFG("fig02_regression", 638, 285))]),
             html.Section(className="figpanel fig3", children=[
                 dcc.Graph(id="fig3", style={"height": "100%"},
-                          config=GRAPH_CFG("fig03_OCT_maps", 816, 408))]),
+                          config=GRAPH_CFG("fig03_OCT_maps", 638, 285))]),
         ]),
     ]),
 ])
@@ -258,22 +319,65 @@ def _qs_to_dict(search):
     return dict(parse_qsl((search or "").lstrip("?")))
 
 
-# ---- URL (on load) and All/None buttons set the controls ----
+def _excluded(inc_subj, inc_eyes):
+    """The two checklists -> one canonical `exclude` tuple (see parse_params).
+    They are independent: a point is out if its subject OR its eye is unchecked.
+    Keeping both spellings apart is what makes the URL round-trip exactly."""
+    inc_subj, inc_eyes = set(inc_subj or []), set(inc_eyes or [])
+    return tuple(sorted([s for s in SUBJECTS if s not in inc_subj]
+                        + [t for t in ALL_EYES if t not in inc_eyes]))
+
+
+# ---- URL (on load), All/None and Reset set the controls ----
 @app.callback(
-    Output("subjects", "value"), Output("stat", "value"), Output("t1band", "value"),
-    Output("mode", "value"), Output("sel", "data"),
+    Output("subjects", "value"), Output("eyes", "value"), Output("stat", "value"),
+    Output("t1band", "value"), Output("mode", "value"), Output("sel", "data"),
     Input("url", "search"), Input("sel-all", "n_clicks"), Input("sel-none", "n_clicks"),
+    Input("reset", "n_clicks"),
     State("stat", "value"), State("t1band", "value"), State("mode", "value"),
     State("sel", "data"), prevent_initial_call=False)
-def _from_url(search, _a, _n, stat, band, mode, sel):
+def _from_url(search, _a, _n, _r, stat, band, mode, sel):
     trig = ctx.triggered_id
     if trig == "sel-all":
-        return SUBJECTS, stat, band, mode, sel
+        return SUBJECTS, list(ALL_EYES), stat, band, mode, sel
     if trig == "sel-none":
-        return [], stat, band, mode, sel
+        return [], [], stat, band, mode, sel
+    if trig == "reset":
+        return (SUBJECTS, list(ALL_EYES), DEFAULTS["stat"], DEFAULTS["band"],
+                DEFAULTS["mode"], {"mac": DEF_MAC, "disc": DEF_DISC})
     p = parse_params(_qs_to_dict(search))
-    included = [s for s in SUBJECTS if s not in p["exclude"]]
-    return included, p["stat"], p["band"], p["mode"], {"mac": p["mac"], "disc": p["disc"]}
+    ex = set(p["exclude"])
+    return ([s for s in SUBJECTS if s not in ex], [t for t in ALL_EYES if t not in ex],
+            p["stat"], p["band"], p["mode"], {"mac": p["mac"], "disc": p["disc"]})
+
+
+# ---- clicking a Figure 2 point drops it from the analysis (click again to
+# restore). Average mode toggles the whole subject (one point = one subject),
+# LME mode toggles that eye. Both checklists are duplicate outputs of _from_url.
+@app.callback(Output("subjects", "value", allow_duplicate=True),
+              Output("eyes", "value", allow_duplicate=True),
+              Input("fig2", "clickData"), State("mode", "value"),
+              State("subjects", "value"), State("eyes", "value"),
+              prevent_initial_call=True)
+def _toggle_point(click, mode, inc_subj, inc_eyes):
+    pts = (click or {}).get("points") or []
+    cd = pts[0].get("customdata") if pts else None
+    if not isinstance(cd, (list, tuple)) or len(cd) < 3:
+        return no_update, no_update          # regression line, or clickData reset
+    subj, tok, ghost = cd[0], cd[1], cd[2]
+    inc_subj, inc_eyes = list(inc_subj or []), list(inc_eyes or [])
+    if ghost:                                # put it back: clear BOTH levels that
+        if subj not in inc_subj:             # could be keeping it out
+            inc_subj.append(subj)
+        for e in EYES_OF[subj]:
+            t = f"{subj}{EYE_SEP}{e}"
+            if tok in (subj, t) and t not in inc_eyes:
+                inc_eyes.append(t)
+    elif mode == "avg":
+        inc_subj = [s for s in inc_subj if s != tok]
+    else:
+        inc_eyes = [t for t in inc_eyes if t != tok]
+    return sorted(inc_subj), sorted(inc_eyes)
 
 
 # NOTE: writing the URL is done CLIENTSIDE (see the push-out callback near the
@@ -327,14 +431,13 @@ def _select_sector(click, _rows, sel):
 @app.callback(
     Output("fig1", "figure"), Output("fig2", "figure"), Output("fig3", "figure"),
     Output("avgbox", "children"), Output("ncount", "children"),
-    Input("subjects", "value"), Input("stat", "value"), Input("t1band", "value"),
-    Input("mode", "value"), Input("sel", "data"))
-def _render(included, stat, sel_band, mode, sel):
-    included = included or []
-    excluded = tuple(sorted(set(SUBJECTS) - set(included)))
-    view = resolve_view(exclude=excluded, stat=stat, band=sel_band,
+    Input("subjects", "value"), Input("eyes", "value"), Input("stat", "value"),
+    Input("t1band", "value"), Input("mode", "value"), Input("sel", "data"))
+def _render(inc_subj, inc_eyes, stat, sel_band, mode, sel):
+    view = resolve_view(exclude=_excluded(inc_subj, inc_eyes), stat=stat, band=sel_band,
                         mac=sel["mac"], disc=sel["disc"], mode=mode)
-    count = f"{view['n']} / {len(SUBJECTS)} subjects included"
+    count = (f"{view['n']} / {len(SUBJECTS)} subjects · "
+             f"{view['n_eyes']} / {len(ALL_EYES)} eyes included")
     return (build_fig1(view), build_fig2(view), build_fig3(view),
             build_avg_table(view), count)
 
@@ -347,9 +450,13 @@ def _render(included, stat, sel_band, mode, sel):
 # store. exclude is derived from the full subject list (all-subjects store).
 app.clientside_callback(
     """
-    function(included, stat, band, mode, sel, allSubjects) {
-        var inc = included || [], all = allSubjects || [];
-        var excl = all.filter(function (s) { return inc.indexOf(s) === -1; });
+    function(incSubj, incEyes, stat, band, mode, sel, allSubjects, allEyes) {
+        // must match _excluded() in the Python: union of the two checklists,
+        // subject tokens and eye tokens kept distinct, sorted.
+        var is = incSubj || [], ie = incEyes || [];
+        var excl = (allSubjects || []).filter(function (s) { return is.indexOf(s) === -1; })
+            .concat((allEyes || []).filter(function (t) { return ie.indexOf(t) === -1; }))
+            .sort();
         var params = {exclude: excl.join(","), stat: stat, band: band,
                       mac: (sel || {}).mac, disc: (sel || {}).disc, mode: mode};
         var ORDER = ["exclude", "stat", "band", "mac", "disc", "mode"];
@@ -372,9 +479,9 @@ app.clientside_callback(
     }
     """,
     Output("postbridge-dummy", "data"),
-    Input("subjects", "value"), Input("stat", "value"), Input("t1band", "value"),
-    Input("mode", "value"), Input("sel", "data"),
-    State("all-subjects", "data"),
+    Input("subjects", "value"), Input("eyes", "value"), Input("stat", "value"),
+    Input("t1band", "value"), Input("mode", "value"), Input("sel", "data"),
+    State("all-subjects", "data"), State("all-eyes", "data"),
     prevent_initial_call=True,
 )
 
@@ -383,31 +490,34 @@ app.clientside_callback(
 app.index_string = """<!DOCTYPE html>
 <html><head>{%metas%}<title>{%title%}</title>{%favicon%}{%css%}
 <style>
-  body { margin:0; background:#111; color:#eee; font-family:Arial,Helvetica,sans-serif; }
-  h1 { text-align:center; font-size:22px; margin:14px 0 8px; }
-  #app { display:flex; align-items:stretch; gap:16px; padding:0 16px 16px; height:calc(100vh - 60px); }
+  html, body { height:100%; margin:0; overflow:hidden; }
+  body { display:flex; flex-direction:column; background:#111; color:#eee; font-family:Arial,Helvetica,sans-serif; }
+  h1 { flex:0 0 auto; text-align:center; font-size:22px; margin:14px 0 8px; }
+  /* row-reverse puts the sidebar on the RIGHT while keeping the controls first
+     in the DOM (so keyboard/screen-reader order stays controls -> figures). */
+  #app { flex:1 1 auto; min-height:0; display:flex; flex-direction:row-reverse;
+    align-items:stretch; gap:16px; padding:0 16px 16px; }
   #sidebar { width:210px; flex:0 0 210px; background:#1e1e1e; border-radius:6px;
     padding:14px; overflow-y:auto; }
-  #sidebar h3 { margin:0 0 8px; font-size:14px; }
-  #sidebar .hint { font-size:11px; color:#999; margin-bottom:10px; line-height:1.4; }
-  #sidebar .lbl { font-size:12px; color:#aaa; margin-bottom:6px; }
+  #sidebar h3 { margin:0 0 8px; font-size:16px; }
+  #sidebar .hint { font-size:12px; color:#999; margin-bottom:10px; line-height:1.4; }
+  #sidebar .lbl { font-size:14px; color:#aaa; margin-bottom:6px; }
   #sidebar hr { border:none; border-top:1px solid #333; margin:14px 0 12px; }
   .btnrow { display:flex; gap:6px; margin-bottom:8px; }
   .btnrow button { flex:1; background:#2a2a2a; color:#ddd; border:1px solid #444;
-    border-radius:4px; padding:4px; font-size:11px; cursor:pointer; }
+    border-radius:4px; padding:4px; font-size:12px; cursor:pointer; }
   .btnrow button:hover { background:#3a3a3a; }
   /* all sidebar OPTIONS share one font size (incl. the dropdown value + menu) */
   .subjlist label,
   #stat label, #mode label,
-  #t1band .Select-control, #t1band .Select-value-label,
-  #t1band .Select-placeholder, #t1band .Select-menu-outer,
-  #t1band .Select-option, #t1band .VirtualizedSelectOption { font-size:12px; }
+  #t1band, #t1band * { font-size:12px; }
   .subjlist label { display:flex; align-items:center; padding:1px 0; cursor:pointer; color:#9ecbff; }
   .subjlist input { margin-right:7px; }
-  #stat label { display:inline-block; color:#ddd; margin-right:18px; cursor:pointer; }
-  #mode label { display:block; color:#ddd; margin-bottom:5px; cursor:pointer; }
-  #stat input, #mode input { margin-right:7px; }
-  .ncount { font-size:11px; color:#7fd17f; margin-top:8px; }
+  .eyelist { display:grid; grid-template-columns:1fr 1fr; column-gap:4px; }
+  #stat label { display:inline-flex; align-items:center; color:#ddd; margin-right:18px; cursor:pointer; }
+  #mode label { display:flex; align-items:center; color:#ddd; margin-bottom:5px; cursor:pointer; }
+  #stat input, #mode input { margin-right:7px; flex-shrink:0; }
+  .ncount { font-size:12px; color:#7fd17f; margin-top:8px; }
   #sidebar .dash-dropdown { color:#111; }
   #figures { flex:1 1 auto; min-width:0; display:grid; gap:16px;
     grid-template-columns:7fr 8fr; grid-template-rows:1fr 1fr;
@@ -466,6 +576,29 @@ app.index_string = """<!DOCTYPE html>
       window.dispatchEvent(new PopStateEvent("popstate"));
     }
   };
+})();
+</script>
+<script>
+(function () {
+  // Fig 3's two subplots use scaleanchor/scaleratio (equal-aspect wedge maps),
+  // which is the known trouble case for Plotly's resize ResizeObserver: it can
+  // get stuck reporting a stale (shrunk) size after a shrink->grow cycle. Force
+  // an explicit relayout with the freshly measured container size on window
+  // resize, rather than trusting Plotly.Plots.resize()'s own re-measurement
+  // (Plotly attaches "js-plotly-plot" to #fig3 itself, not a child of it).
+  var t;
+  function resizeFig3() {
+    var gd = document.getElementById('fig3');
+    if (!gd || !window.Plotly || !gd._fullLayout) return;
+    var rect = gd.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      Plotly.relayout(gd, {width: rect.width, height: rect.height});
+    }
+  }
+  window.addEventListener('resize', function () {
+    clearTimeout(t);
+    t = setTimeout(resizeFig3, 150);
+  });
 })();
 </script>
 {%config%}{%scripts%}{%renderer%}</footer></body></html>"""

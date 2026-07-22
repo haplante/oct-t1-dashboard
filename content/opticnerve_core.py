@@ -28,10 +28,16 @@ _ORDER = ("exclude", "stat", "band", "mac", "disc", "mode")
 
 
 def parse_params(mapping):
-    """Normalize a dict-like of raw query values into the 6 canonical params."""
+    """Normalize a dict-like of raw query values into the 6 canonical params.
+
+    `exclude` holds two kinds of token: a bare "sub-0200" (whole subject, both
+    eyes) and a dotted "sub-0200.OD" (that eye only). Unknown tokens are dropped
+    so a hand-edited URL can never reach fit(). Sorted so it is a stable
+    lru_cache key.
+    """
     g = mapping.get
     exclude = g("exclude", "") or ""
-    exclude = tuple(s for s in (x.strip() for x in exclude.split(",")) if s)
+    exclude = tuple(sorted({s for s in (x.strip() for x in exclude.split(",")) if s in _VALID_EXCL}))
     pick = lambda key, allowed: (g(key) if g(key) in allowed else DEFAULTS[key])
     # mac/disc are clamped to the known sector metrics so a bad value can never
     # reach fit()/groupby (which would KeyError -> HTTP 500 on the public route).
@@ -125,6 +131,24 @@ PROFILE = pd.read_csv(DATA / "data_profile.csv")
 SLICE_COLS = [f"T1_slice_{i:02d}" for i in range(N_SLICES)]
 SUBJECTS = sorted(MERGED["MRI_ID"].unique())
 
+# Exclusion is always resolved to EYE level; a bare subject token is shorthand
+# for "both of its eyes". Keeping both spellings in `exclude` lets the URL
+# round-trip the sidebar's two checklists (subject-level and eye-level) exactly.
+EYE_SEP = "."
+EYES_OF = {s: tuple(sorted(g)) for s, g in MERGED.groupby("MRI_ID")["Eye"]}
+ALL_EYES = tuple(f"{s}{EYE_SEP}{e}" for s in SUBJECTS for e in EYES_OF[s])
+_VALID_EXCL = frozenset(SUBJECTS) | frozenset(ALL_EYES)
+
+
+def split_excluded(excluded):
+    """-> (subjects fully out, set of excluded 'SUBJ.EYE' tokens)."""
+    eyes = {t for t in excluded if EYE_SEP in t}
+    for s in excluded:
+        if EYE_SEP not in s:
+            eyes.update(f"{s}{EYE_SEP}{e}" for e in EYES_OF[s])
+    gone = {s for s in SUBJECTS if all(f"{s}{EYE_SEP}{e}" in eyes for e in EYES_OF[s])}
+    return gone, eyes
+
 _uri = lambda p: "data:image/jpeg;base64," + base64.b64encode(Path(p).read_bytes()).decode()
 MAC_URI, DISC_URI = _uri(DATA / "macula_OD.jpg"), _uri(DATA / "disc_OD.jpg")
 
@@ -154,22 +178,32 @@ def bh_fdr(p):
 def fit(excluded, sector, band, mode):
     """Fit T1(band) ~ OCT(sector) for the active subjects.
 
-    excluded : tuple of MRI_IDs to drop (hashable, so results are cached).
-    Returns a dict of results, or None if there are too few points.
+    excluded : tuple of exclusion tokens (see parse_params), hashable so results
+    are cached. Returns a dict of results, or None if there are too few points.
       b0,b1  intercept/slope       R2,R  (marginal) R-squared / signed R
       p      slope p-value         x,y   points to plot in Figure 2
       eye    per-point eye (LME only) — None in average mode
+      gx,gy,gsubj,geye  the EXCLUDED points, so Figure 2 can still draw them
+                        hollow (click to put them back)
     """
-    rows = MERGED[~MERGED["MRI_ID"].isin(excluded)]
+    gone, out_eyes = split_excluded(excluded)
+    keep = ~(MERGED["MRI_ID"] + EYE_SEP + MERGED["Eye"]).isin(out_eyes)
+    rows, dropped = MERGED[keep], MERGED[~keep]
 
     if mode == "avg":                       # average both eyes -> one point per subject -> OLS
         d = (rows.groupby("MRI_ID", as_index=False)[[sector, band]].mean()
                  .dropna(subset=[sector, band]))
         if len(d) < 5:
             return None
+        # ghosts: only subjects that lost BOTH eyes (a subject that lost one eye
+        # is still plotted, just averaged over the eye that is left)
+        g = (dropped[dropped["MRI_ID"].isin(gone)]
+             .groupby("MRI_ID", as_index=False)[[sector, band]].mean()
+             .dropna(subset=[sector, band]))
         f = linregress(d[sector], d[band])
         return dict(b0=f.intercept, b1=f.slope, R2=f.rvalue ** 2, R=f.rvalue, p=f.pvalue,
-                    x=tuple(d[sector]), y=tuple(d[band]), eye=None, subj=tuple(d["MRI_ID"]))
+                    x=tuple(d[sector]), y=tuple(d[band]), eye=None, subj=tuple(d["MRI_ID"]),
+                    gx=tuple(g[sector]), gy=tuple(g[band]), gsubj=tuple(g["MRI_ID"]), geye=None)
 
     # mode == "lme": per-eye data, random intercept per subject
     d = rows[["MRI_ID", "Eye", sector, band]].dropna()
@@ -188,8 +222,16 @@ def fit(excluded, sector, band, mode):
     ssr = float(((yhat - ybar) ** 2).sum())                             # fixed-effect variance
     R2 = ssr / sst if sst > 0 else np.nan
     R = np.sign(b1) * np.sqrt(max(R2, 0)) if not np.isnan(R2) else np.nan
+    # ghosts: every dropped eye, on the same marginal scale. A dropped eye whose
+    # subject is still in the model borrows that subject's intercept; a fully
+    # dropped subject has none, so it falls back to the population mean (u = 0).
+    gd = dropped[["MRI_ID", "Eye", sector, band]].dropna()
+    u_map = {k: float(v.iloc[0]) for k, v in res.random_effects.items()}
+    gy = gd[band] - gd["MRI_ID"].map(u_map).fillna(0.0)
     return dict(b0=b0, b1=b1, R2=R2, R=R, p=float(res.pvalues[sector]),
-                x=tuple(d[sector]), y=tuple(y_marg), eye=tuple(d["Eye"]), subj=tuple(d["MRI_ID"]))
+                x=tuple(d[sector]), y=tuple(y_marg), eye=tuple(d["Eye"]), subj=tuple(d["MRI_ID"]),
+                gx=tuple(gd[sector]), gy=tuple(gy), gsubj=tuple(gd["MRI_ID"]),
+                geye=tuple(gd["Eye"]))
 
 
 def fit_family(excluded, metrics, band, mode):
@@ -231,7 +273,8 @@ T1_COLS_ORDER = [b[0] for b in T1_BANDS]
 # FIGURE 1 — T1 profile along the optic nerve
 # ============================================================================
 def build_fig1(view):
-    prof = PROFILE[~PROFILE["MRI_ID"].isin(view["excluded"])]
+    _, out_eyes = split_excluded(view["excluded"])
+    prof = PROFILE[~(PROFILE["MRI_ID"] + EYE_SEP + PROFILE["Eye"]).isin(out_eyes)]
     mm = np.arange(N_SLICES) + 0.5
     fig = go.Figure()
     for eye, col in [("OD", C_OD), ("OS", C_OS)]:
@@ -269,6 +312,18 @@ def build_fig1(view):
 # ============================================================================
 # FIGURE 2 — correlation with 4 regression lines per panel
 # ============================================================================
+def _cdata(subj, eye, ghost):
+    """Per-point customdata rows: [label, exclusion token, ghost flag].
+
+    The token is what a Figure 2 click toggles: the bare subject in average mode
+    (one point = one subject) and 'SUBJ.EYE' in LME mode (one point = one eye).
+    """
+    subj = np.asarray(subj, dtype=object)
+    tok = (subj if eye is None else
+           np.array([f"{s}{EYE_SEP}{e}" for s, e in zip(subj, eye)], dtype=object))
+    return np.stack([subj, tok, np.full(len(subj), int(ghost), dtype=object)], axis=-1)
+
+
 def build_fig2(view):
     mode, stat, sel_band = view["mode"], view["stat"], view["band"]
     y_title = ("marginal ON T₁ (ms)" if mode == "lme" else "ON T₁ (ms)")
@@ -287,13 +342,15 @@ def build_fig2(view):
                 continue
             vis = True if band == sel_band else "legendonly"
             grp = f"{col}-{band}"
-            x, y, subj = np.array(r["x"]), np.array(r["y"]), np.array(r["subj"])
-            hov = lambda side="": (f"<b>%{{customdata}}</b>{side} · {lbl}<br>"
-                                   f"{sector_name(sector)} = %{{x:.2f}}"
-                                   f"<br>T₁ = %{{y:.0f}} ms<extra></extra>")
+            x, y = np.array(r["x"]), np.array(r["y"])
+            cd = _cdata(r["subj"], r["eye"], False)
+            hov = lambda side="", tail="click → remove": (
+                f"<b>%{{customdata[0]}}</b>{side} · {lbl}<br>"
+                f"{sector_name(sector)} = %{{x:.2f}}"
+                f"<br>T₁ = %{{y:.0f}} ms<br><i>({tail})</i><extra></extra>")
             if r["eye"] is None:                       # average mode: one marker per subject
                 fig.add_scatter(x=x, y=y, mode="markers", legend=leg, legendgroup=grp,
-                    showlegend=False, visible=vis, row=1, col=col, customdata=subj,
+                    showlegend=False, visible=vis, row=1, col=col, customdata=cd,
                     marker=dict(color=c, size=10, line=dict(color="white", width=1.2)),
                     hovertemplate=hov(), hoverlabel=dict(bgcolor="#222", font=dict(color="#fff")))
             else:                                      # LME mode: OD filled, OS open
@@ -304,13 +361,22 @@ def build_fig2(view):
                               else dict(color=c, size=10, line=dict(width=0)))
                     fig.add_scatter(x=x[sel_e], y=y[sel_e], mode="markers", legend=leg,
                         legendgroup=grp, showlegend=False, visible=vis, row=1, col=col,
-                        customdata=subj[sel_e], marker=marker,
+                        customdata=cd[sel_e], marker=marker,
                         hovertemplate=hov(f" · {e}"), hoverlabel=dict(bgcolor="#222", font=dict(color="#fff")))
+            # excluded points: grey and hollow, outside the fit, click to restore
+            if r["gx"]:
+                gcd = _cdata(r["gsubj"], r["geye"], True)
+                fig.add_scatter(x=np.array(r["gx"]), y=np.array(r["gy"]), mode="markers",
+                    legend=leg, legendgroup=grp, showlegend=False, visible=vis, row=1, col=col,
+                    customdata=gcd, opacity=0.55,
+                    marker=dict(color="rgba(0,0,0,0)", size=10, line=dict(color="#888", width=1.5)),
+                    hovertemplate=hov(" · excluded", "click → put back"),
+                    hoverlabel=dict(bgcolor="#222", font=dict(color="#fff")))
             xs = np.array([x.min(), x.max()])
             star = " *" if (not np.isnan(q) and q < 0.05) else ""
             fig.add_scatter(x=xs, y=r["b0"] + r["b1"] * xs, mode="lines", legend=leg,
                 legendgroup=grp, visible=vis, row=1, col=col, line=dict(color=c, width=2),
-                hoverinfo="skip", name=f"{lbl}  ({stat_lbl(stat)}={fmt2(stat_val(r, stat))}){star}")
+                hoverinfo="skip", name=f"{lbl.replace(' mm','')} ({stat_lbl(stat)}={fmt2(stat_val(r, stat))}){star}")
         # grey dotted reference: default sector at the selected band (only when a
         # non-default sector is selected) — lets you compare against the baseline.
         ref = panel.get("ref")
@@ -319,13 +385,13 @@ def build_fig2(view):
             fig.add_scatter(x=rx, y=ref["b0"] + ref["b1"] * rx, mode="lines", legend=leg,
                 row=1, col=col, line=dict(color="#999", width=1.5, dash="dot"),
                 hoverinfo="skip",
-                name=f"{BAND_LABEL[sel_band]} {sector_name(panel['default_sector'])}")
+                name=f"{BAND_LABEL[sel_band].replace(' mm','')} {sector_name(panel['default_sector']).split(' (')[0]}")
         fig.update_xaxes(title=dict(text=xlab, standoff=5), row=1, col=col, **AX)
         fig.update_yaxes(title=dict(text=y_title), row=1, col=col, **AX)
 
     leg_style = dict(bgcolor="rgba(255,255,255,0.7)", bordercolor="#ccc", borderwidth=1,
-                     font=dict(size=12), xanchor="right", yanchor="top", y=0.99,
-                     groupclick="togglegroup", tracegroupgap=1)
+                     font=dict(size=10), xanchor="right", yanchor="top", y=0.99,
+                     groupclick="togglegroup", tracegroupgap=0, itemwidth=30)
     fig.update_layout(autosize=True, paper_bgcolor="white", plot_bgcolor="white", dragmode=False,
         font=dict(color="black", family="DejaVu Sans, Arial, sans-serif", size=13),
         margin=dict(l=70, r=10, t=40, b=45),
@@ -409,7 +475,9 @@ def resolve_view(exclude=(), stat="R2m", band="T1_mean_015",
                            "stat": stat, "band": band, "mac": mac,
                            "disc": disc, "mode": mode})
     excluded = params["exclude"]
-    included = [s for s in SUBJECTS if s not in excluded]
+    gone, out_eyes = split_excluded(excluded)
+    included = [s for s in SUBJECTS if s not in gone]
+    n_eyes = sum(t not in out_eyes for t in ALL_EYES)
 
     # Fig 3 / averages-table fits for the SELECTED band (used to colour wedges)
     mac_fits, mac_pf = fit_family(excluded, MAC_METRICS, params["band"], params["mode"])
@@ -442,7 +510,7 @@ def resolve_view(exclude=(), stat="R2m", band="T1_mean_015",
 
     return {
         "params": params, "excluded": excluded,
-        "subjects": included, "n": len(included),
+        "subjects": included, "n": len(included), "n_eyes": n_eyes,
         "stat": params["stat"], "band": params["band"], "mode": params["mode"],
         "mac": params["mac"], "disc": params["disc"],
         "mac_fits": mac_fits, "mac_pf": mac_pf,
