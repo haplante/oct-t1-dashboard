@@ -7,9 +7,7 @@ numbering:
 
 ## Dashboard
 
-<div style="width:100%; aspect-ratio:1536/695; overflow:hidden;">
-<iframe src="http://localhost:3000/" style="width:100%; height:100%; border:0;"></iframe>
-</div>
+<iframe src="http://localhost:3000/"></iframe>
 
 <p style="text-align:center; margin:0.75em 0 1.5em;">
 <a class="dashbtn" href="http://localhost:3000/" target="_blank" rel="noopener">Open dashboard in a new tab ↗</a>
