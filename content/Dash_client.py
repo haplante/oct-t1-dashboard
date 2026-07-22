@@ -9,22 +9,59 @@ modes selectable in the sidebar:
                         intercept per subject; Figure 2 plots the marginal T1
                         (observed T1 minus the subject random intercept).
 
-The code is intentionally written in the same plain style as the figure
-notebooks so it can be read top to bottom.
+Also serves, for embedding in paper.md:
+  /opticnerve/<figid>   the figure as a Plotly JSON spec  (figid: fig1|fig2|fig3|all)
+  /figure/<figid>       a standalone page rendering that figure
 
-Run locally:   python Dash_client.py       (opens http://127.0.0.1:8050)
+Run locally:   python Dash_client.py       (http://127.0.0.1:8050)
 Deploy:        gunicorn Dash_client:server  (see render.yaml)
 """
 
-import numpy as np
+import json
+from urllib.parse import parse_qsl
 
+import numpy as np
 from dash import Dash, dcc, html, Input, Output, State, ctx, ALL, no_update
+from flask import request, abort
+from flask_cors import CORS
+from plotly.utils import PlotlyJSONEncoder
 
 from opticnerve_core import (
     T1_BANDS, DEF_MAC, DEF_DISC, MAC_AVG, DISC_AVG, SUBJECTS, stat_val,
     stat_lbl, resolve_view, DEFAULTS, build_fig1, build_fig2, build_fig3,
-    parse_params, serialize_params, ALL_EYES, EYES_OF, EYE_SEP, FIG_SIZE,
+    parse_params, ALL_EYES, EYES_OF, EYE_SEP, FIG_SIZE, PARAM_ORDER,
 )
+
+# The browser needs the same state model as the Python. Injected into every
+# script below rather than hand-copied, so the two can never drift.
+JS_ORDER = json.dumps(list(PARAM_ORDER))
+JS_DEFAULTS = json.dumps({**DEFAULTS, "exclude": ""})
+
+# Browser twin of _toggle_point() below: the dashboard toggles a clicked Fig 2
+# point through a Dash callback, but the standalone /figure/fig2 page has no
+# Python behind it and must do the same edit to the `exclude` string itself.
+# Self-contained on purpose (no browser APIs) so the tests can run it under node.
+# Unlike the Python it needs no `mode`: a Fig 2 point's own token is already the
+# subject in average mode and the eye in LME mode.
+_TOGGLE_JS = ("""
+function toggleExclude(exclude, subj, tok, ghost) {
+  var SEP = __SEP__;
+  var out = (exclude || "").split(",").filter(Boolean);
+  if (ghost) {
+    // Put it back by clearing every token that could still be keeping it out:
+    // its bare subject token, plus the eye token(s) the click covers.
+    var pre = subj + SEP;
+    out = out.filter(function (t) {
+      if (t === subj) return false;
+      if (t.indexOf(pre) === 0 && (tok === subj || tok === t)) return false;
+      return true;
+    });
+  } else if (out.indexOf(tok) === -1) {
+    out.push(tok);
+  }
+  return out.sort().join(",");
+}
+""".replace("__SEP__", json.dumps(EYE_SEP)))
 
 
 # ============================================================================
@@ -73,30 +110,12 @@ def build_avg_table(view):
 # ============================================================================
 app = Dash(__name__, title="OCT – T₁ Correlation")
 server = app.server                      # gunicorn entry point (Render)
-
-import json as _json
-
-from flask import request, abort
-from flask_cors import CORS
-from plotly.utils import PlotlyJSONEncoder
-
 CORS(server, resources={r"/opticnerve/*": {"origins": "*"}})
 
 _BUILDERS = {"fig1": build_fig1, "fig2": build_fig2, "fig3": build_fig3}
 
-# Native pixel canvas each standalone /figure/<figid> page renders at (no
-# autosize/responsive) — the same canvas the builders draw on, and the same one
-# the dashboard's own stage is laid out from. paper.md scales this down visually
-# with a CSS transform to fit the article column — see the per-figure scale
-# factors there, which must be recomputed (720 / width) if these change.
-FIG_NATIVE_SIZE = FIG_SIZE
-
-# PNG size for each standalone figure's own "download as png" modebar button
-# (independent of FIG_NATIVE_SIZE / the on-screen paper.md scale). Edit these
-# to change what gets downloaded; scale is the extra DPI multiplier (600/96
-# matches the dashboard's own GRAPH_CFG export resolution).
-PNG_EXPORT_SIZE = dict(FIG_SIZE)
-PNG_EXPORT_SCALE = 600 / 96
+# Extra DPI multiplier for the modebar's "download as png" (600 dpi / 96 css dpi).
+PNG_SCALE = 600 / 96
 
 
 @server.route("/opticnerve/<figid>")
@@ -112,33 +131,30 @@ def opticnerve(figid):
     else:
         payload["figure"] = _BUILDERS[figid](view).to_dict()
     return server.response_class(
-        _json.dumps(payload, cls=PlotlyJSONEncoder), mimetype="application/json")
+        json.dumps(payload, cls=PlotlyJSONEncoder), mimetype="application/json")
 
 
 # ---------------------------------------------------------------------------
 # Standalone live figure pages, for embedding in the article as <iframe>s.
-# MyST won't run author <script>, so the same-page CustomEvent bus can't work
-# there. Instead each figure is its own page served here; because every figure
-# iframe AND the dashboard iframe are same-origin (this app), they sync directly
-# via a BroadcastChannel — no parent-page JS required.
+# MyST won't run author <script>, so the article page itself cannot host the
+# sync bus. Instead each figure is its own page served here; because every
+# figure iframe AND the dashboard iframe are same-origin (this app), they sync
+# directly via a BroadcastChannel — no parent-page JS required.
 # ---------------------------------------------------------------------------
 _FIG_CLIENT = r"""
 (function () {
   "use strict";
+__TOGGLE__
   var FIGID = "__FIGID__";
-  var NATIVE_W = __FIGW__, NATIVE_H = __FIGH__;
-  var PNG_W = __PNGW__, PNG_H = __PNGH__, PNG_SCALE = __PNGSCALE__;
-  var ORDER = ["exclude","stat","band","mac","disc","mode"];
-  var DEF = {exclude:"",stat:"R2m",band:"T1_mean_015",mac:"All_1_3_gcc",disc:"All_um_",mode:"avg"};
+  var NATIVE_W = __FIGW__, NATIVE_H = __FIGH__, PNG_SCALE = __PNGSCALE__;
+  var ORDER = __ORDER__, DEF = __DEFAULTS__;
   var API = window.location.origin;
   var bc = ("BroadcastChannel" in window) ? new BroadcastChannel("opticnerve") : null;
   var applying = false, last = null;
-  // MyST's theme forces every embedded <iframe> into its own responsive box
-  // (fixed padding-bottom aspect ratio, ignoring any width/height we author),
-  // so we can't control the iframe's size from paper.md. Instead the figure
-  // renders at a fixed native pixel canvas (crisp, like a static image) and
-  // this page scales that canvas to fit whatever box the theme actually gave
-  // it, the same way object-fit:contain would for an <img>.
+  // MyST's theme forces every embedded <iframe> into its own responsive box and
+  // discards the width/height we author, so the size can't be set from paper.md.
+  // The figure instead renders on a fixed native canvas that this page scales to
+  // fit whatever box the theme gave it, the way object-fit:contain would.
   function fitStage() {
     var scale = Math.min(window.innerWidth / NATIVE_W, window.innerHeight / NATIVE_H);
     var stage = document.getElementById("stage");
@@ -159,13 +175,11 @@ _FIG_CLIENT = r"""
     return fetch(API + "/opticnerve/" + FIGID + "?" + serialize(p))
       .then(function (r) { return r.json(); })
       .then(function (j) {
-        // Fixed native canvas, no responsive/autosize: paper.md scales the
-        // whole page visually via CSS transform instead, like a PNG would be,
-        // so Plotly never needs to re-measure or redraw on resize.
         return Plotly.react("fig", j.figure.data, j.figure.layout,
                             {responsive:false, displaylogo:false,
                              toImageButtonOptions:{format:"png", filename:FIGID,
-                                                   width:PNG_W, height:PNG_H, scale:PNG_SCALE}});
+                                                   width:NATIVE_W, height:NATIVE_H,
+                                                   scale:PNG_SCALE}});
       })
       .then(function () {
         last = p; wireClicks();
@@ -175,15 +189,24 @@ _FIG_CLIENT = r"""
       });
   }
   function wireClicks() {
-    if (FIGID !== "fig3") return;
+    if (FIGID !== "fig2" && FIGID !== "fig3") return;   // fig1 has nothing to click
     var gd = document.getElementById("fig");
     if (gd._wired) return; gd._wired = true;
     gd.on("plotly_click", function (ev) {
       if (applying) return;
       var pt = ev.points && ev.points[0];
-      var m = pt && (pt.data.meta || (pt.customdata && pt.customdata[0]));
-      if (!m) return;
+      if (!pt) return;
       var p = readParams();
+      if (FIGID === "fig2") {
+        // [subj, tok, ghost] per point; the regression line carries none.
+        var cd = pt.customdata;
+        if (!cd || cd.length < 3) return;
+        p.exclude = toggleExclude(p.exclude, cd[0], cd[1], cd[2]);
+        broadcast(p);
+        return;
+      }
+      var m = pt.data.meta || (pt.customdata && pt.customdata[0]);
+      if (!m) return;
       if (m.slice(-4) === "_gcc") p.mac = (p.mac === m) ? DEF.mac : m;
       else if (m.slice(-4) === "_um_") p.disc = (p.disc === m) ? DEF.disc : m;
       else return;
@@ -220,37 +243,87 @@ _FIG_PAGE = """<!doctype html>
 #stage{position:absolute;top:50%;left:50%;width:__FIGW__px;height:__FIGH__px;
   transform-origin:center;}
 #fig{width:100%;height:100%}
-/* Keep in sync with the same rule in app.index_string below. Plotly has no
-   layout option for rounded annotation backgrounds, so the Fig 3 stat chips get
-   their rounded corners from CSS on the SVG <rect>. This page has its own
-   <style> and does not inherit the dashboard's, so without this the chips
-   render square in paper.md while the dashboard shows them rounded. */
+/* Plotly has no layout option for rounded annotation backgrounds, so the Fig 3
+   stat chips get theirs from CSS. Keep in sync with app.index_string below —
+   this page does not inherit the dashboard's stylesheet. */
 g.annotation rect{rx:6px;ry:6px}</style></head>
 <body><div id="stage"><div id="fig"></div></div>
 <script>__CLIENT__</script>
 </body></html>"""
 
 
+# ---------------------------------------------------------------------------
+# Caption reset chip. MyST strips author <script> from the article page, so a
+# button in a paper.md caption cannot reach the figures directly — but an
+# <iframe> survives the sanitiser (that is how the figures get there). This
+# route serves a caption-sized button that is a pure SENDER on the shared
+# BroadcastChannel: the figure pages and the dashboard already listen and
+# reset themselves. It starts hidden and appears only once it hears a
+# non-default state, which is correct because nothing broadcasts on load.
+# ---------------------------------------------------------------------------
+_CHIP_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>reset</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:transparent;
+  font:bold 11px Arial,Helvetica,sans-serif}
+/* The iframe is exactly the button's size and clips overflow, so the attention
+   grab is a colour flash, not a glow — a box-shadow would be cut off at the
+   edge. Four alternating steps end back on the base red. */
+#rst{display:none;width:100%;height:100%;padding:0;border:1px solid #a3161b;
+  border-radius:4px;background:#d02a2f;color:#fff;font:inherit;letter-spacing:.3px;
+  cursor:pointer;animation:flash 1s ease-in-out 4 alternate}
+#rst:hover{background:#a3161b}
+@keyframes flash{from{background:#d02a2f}to{background:#ff5a5f}}
+@media (prefers-reduced-motion:reduce){#rst{animation:none}}</style></head>
+<body><button id="rst" title="Reset every figure to its default view">&#8634; Reset</button>
+<script>
+(function () {
+  "use strict";
+  if (!("BroadcastChannel" in window)) return;
+  var ORDER = __ORDER__, DEF = __DEFAULTS__;
+  var btn = document.getElementById("rst"), bc = new BroadcastChannel("opticnerve");
+  function ser(p) {
+    return ORDER.map(function (k) {
+      return k + "=" + encodeURIComponent(p[k] == null ? DEF[k] : p[k]);
+    }).join("&");
+  }
+  var DEFSER = ser(DEF);
+  bc.onmessage = function (e) {
+    var p = (e.data || {}).params;
+    if (p) btn.style.display = (ser(p) === DEFSER) ? "none" : "block";
+  };
+  // A channel never delivers a sender its own post, so hide on click ourselves.
+  btn.onclick = function () { bc.postMessage({params: DEF}); btn.style.display = "none"; };
+})();
+</script></body></html>"""
+
+
+@server.route("/resetchip")
+def reset_chip():
+    return server.response_class(
+        _CHIP_PAGE.replace("__ORDER__", JS_ORDER).replace("__DEFAULTS__", JS_DEFAULTS),
+        mimetype="text/html")
+
+
 @server.route("/figure/<figid>")
 def figure_page(figid):
     if figid not in _BUILDERS:
         abort(404)
-    w, h = FIG_NATIVE_SIZE[figid]
-    pw, ph = PNG_EXPORT_SIZE[figid]
-    client = (_FIG_CLIENT.replace("__FIGID__", figid)
-              .replace("__FIGW__", str(w)).replace("__FIGH__", str(h))
-              .replace("__PNGW__", str(pw)).replace("__PNGH__", str(ph))
-              .replace("__PNGSCALE__", str(PNG_EXPORT_SCALE)))
-    page = (_FIG_PAGE.replace("__CLIENT__", client)
-            .replace("__FIGID__", figid)
-            .replace("__FIGW__", str(w)).replace("__FIGH__", str(h)))
-    return server.response_class(page, mimetype="text/html")
+    w, h = FIG_SIZE[figid]
+    subs = {"__FIGID__": figid, "__FIGW__": str(w), "__FIGH__": str(h),
+            "__PNGSCALE__": str(PNG_SCALE), "__ORDER__": JS_ORDER,
+            "__DEFAULTS__": JS_DEFAULTS, "__TOGGLE__": _TOGGLE_JS}
+    client = _FIG_CLIENT
+    page = _FIG_PAGE
+    for k, v in subs.items():
+        client, page = client.replace(k, v), page.replace(k, v)
+    return server.response_class(page.replace("__CLIENT__", client), mimetype="text/html")
+
 
 GRAPH_CFG = lambda name, w, h: dict(
     scrollZoom=False, displaylogo=False, displayModeBar="hover", responsive=False,
     modeBarButtonsToRemove=["select2d", "lasso2d", "zoom2d", "pan2d", "zoomIn2d",
                             "zoomOut2d", "autoScale2d", "resetScale2d"],
-    toImageButtonOptions=dict(format="png", filename=name, width=w, height=h, scale=600 / 96))
+    toImageButtonOptions=dict(format="png", filename=name, width=w, height=h, scale=PNG_SCALE))
 
 # One option per checkbox, interleaved subject / OD / OS so a 3-column CSS grid
 # lays them out as one row per subject. Values are exactly the exclusion tokens
@@ -315,9 +388,6 @@ app.layout = html.Div(id="root", children=[
       ]),
     ]),
 ])
-
-
-from urllib.parse import parse_qsl
 
 
 def _qs_to_dict(search):
@@ -404,19 +474,8 @@ def _toggle_point(click, mode, included):
     return sorted(included)
 
 
-# NOTE: writing the URL is done CLIENTSIDE (see the push-out callback near the
-# bottom), NOT via a Dash Output on url.search. A server callback writing
-# url.search would form a dependency cycle with _from_url (which reads url.search
-# to set the controls): subjects.value -> url.search -> subjects.value. Writing
-# the URL with history.replaceState from a clientside callback (dummy output)
-# keeps the graph acyclic while still updating the address bar + notifying the
-# iframe parent.
-
-
 # ---- clicking a Fig 3 wedge or an averages row selects the Fig 2 sector ----
-# sel.data is also written on load by _from_url (the canonical writer), so this
-# click-driven writer is a duplicate output -> allow_duplicate=True (requires
-# prevent_initial_call=True, already set).
+# Duplicate output: _from_url is the canonical writer of sel.data on load.
 @app.callback(Output("sel", "data", allow_duplicate=True),
               Input("fig3", "clickData"),
               Input({"type": "avgrow", "metric": ALL, "region": ALL}, "n_clicks"),
@@ -434,15 +493,10 @@ def _select_sector(click, _rows, sel):
         else:
             metric = None
     elif isinstance(trig, dict) and trig.get("type") == "avgrow":
-        # only a genuine row click counts (n_clicks>0); ignore the n_clicks=0
-        # firings when _render rebuilds the averages table, which would otherwise
-        # spuriously toggle the selection.
-        trigval = ctx.triggered[0]["value"] if ctx.triggered else None
-        if trigval:
+        # only a real click counts; ignore the n_clicks=0 firings from a table rebuild
+        if ctx.triggered and ctx.triggered[0]["value"]:
             metric, region = trig["metric"], trig["region"]
-    # No genuine selection (e.g. clickData reset to None on re-render, or a table
-    # rebuild): do NOT rewrite sel — returning it would race _from_url and clobber
-    # a sector absorbed from the BroadcastChannel. Leave sel untouched.
+    # nothing selected: leave sel alone, rewriting it would race _from_url
     if not metric:
         return no_update
     sel = dict(sel)
@@ -466,12 +520,10 @@ def _render(included, stat, sel_band, mode, sel):
             build_avg_table(view), count)
 
 
-# ---- push state OUT (clientside): write the URL + notify the iframe parent ----
+# ---- push state OUT (clientside): write the URL + tell the figure iframes ----
 # Runs on any control/click change. Writes the query string with
 # history.replaceState (NOT a Dash Output on url.search -> no dependency cycle
-# with _from_url) and postMessages the new search to the parent window so the
-# inline article figures (state_sync.js bus) stay in sync. Output is a throwaway
-# store. exclude is derived from the full subject list (all-subjects store).
+# with _from_url). Output is a throwaway store.
 app.clientside_callback(
     """
     function(included, stat, band, mode, sel, allTokens) {
@@ -480,25 +532,22 @@ app.clientside_callback(
         var excl = (allTokens || []).filter(function (t) { return inc.indexOf(t) === -1; }).sort();
         var params = {exclude: excl.join(","), stat: stat, band: band,
                       mac: (sel || {}).mac, disc: (sel || {}).disc, mode: mode};
-        var ORDER = ["exclude", "stat", "band", "mac", "disc", "mode"];
-        var qs = ORDER.map(function (k) {
+        var search = "?" + __ORDER__.map(function (k) {
             return k + "=" + encodeURIComponent(params[k] == null ? "" : params[k]);
         }).join("&");
-        var search = "?" + qs;
         try {
             window.history.replaceState(
                 null, "", window.location.pathname + search + window.location.hash);
         } catch (e) {}
-        // Sync to the sibling figure iframes (same origin) via BroadcastChannel.
-        // A single shared channel instance never receives its own posts, so this
-        // does not loop back into this dashboard.
+        // Sync to the sibling figure iframes (same origin). A single shared
+        // channel instance never receives its own posts, so this cannot loop back.
         if ("BroadcastChannel" in window) {
             var bc = window.__ocbc || (window.__ocbc = new BroadcastChannel("opticnerve"));
             bc.postMessage({params: params});
         }
         return window.dash_clientside.no_update;
     }
-    """,
+    """.replace("__ORDER__", JS_ORDER),
     Output("postbridge-dummy", "data"),
     Input("subjects", "value"), Input("stat", "value"),
     Input("t1band", "value"), Input("mode", "value"), Input("sel", "data"),
@@ -507,34 +556,30 @@ app.clientside_callback(
 )
 
 
-# ---- dark theme (kept inline so the app stays a single file) ----
-app.index_string = """<!DOCTYPE html>
+# ---- light theme (kept inline so the app stays a single file) ----
+app.index_string = ("""<!DOCTYPE html>
 <html><head>{%metas%}<title>{%title%}</title>{%favicon%}{%css%}
 <style>
   html, body { height:100%; margin:0; overflow:hidden; }
-  body { background:#111; color:#eee; font-family:Arial,Helvetica,sans-serif; }
-  /* Dash buries our layout under several plain-block divs of its own
-     (#react-entry-point > #_dash-global-error-container > div >
-     #_dash-app-content > #root), so a flex chain from <body> down cannot reach
-     #app: it would size to its CONTENT (the tall sidebar) instead of to the
-     viewport, which is what pushed the figures off the bottom of the screen.
-     position:fixed lifts #root out of that chain entirely and pins it to the
-     viewport, without this file having to know Dash's internal div names. */
+  body { background:#fff; color:#222; font-family:Arial,Helvetica,sans-serif; }
+  /* position:fixed pins #root to the viewport, escaping the plain-block divs
+     Dash wraps the layout in — a flex chain from <body> cannot reach through
+     them, so #app would size to the tall sidebar instead of the window. */
   #root { position:fixed; inset:0; display:flex; flex-direction:column; }
   h1 { flex:0 0 auto; text-align:center; font-size:22px; margin:14px 0 8px; }
   #app { flex:1 1 auto; min-height:0; display:flex; padding:0 16px 16px; }
   /* no height of its own: as a flex child of the stage it stretches to the
      stage's 626px, i.e. exactly fig2 + gap + fig3, and scales with it. */
-  #sidebar { flex:0 0 210px; background:#1e1e1e; border-radius:6px;
+  #sidebar { flex:0 0 210px; background:#f4f4f6; border-radius:6px;
     padding:14px; overflow-y:auto; }
   #sidebar h3 { margin:0 0 8px; font-size:16px; }
-  #sidebar .hint { font-size:11px; color:#999; margin-bottom:8px; line-height:1.35; }
-  #sidebar .lbl { font-size:13px; color:#aaa; margin-bottom:4px; }
-  #sidebar hr { border:none; border-top:1px solid #333; margin:6px 0 5px; }
+  #sidebar .hint { font-size:11px; color:#666; margin-bottom:8px; line-height:1.35; }
+  #sidebar .lbl { font-size:13px; color:#555; margin-bottom:4px; }
+  #sidebar hr { border:none; border-top:1px solid #ddd; margin:6px 0 5px; }
   .btnrow { display:flex; gap:6px; margin-bottom:8px; }
-  .btnrow button { flex:1; background:#2a2a2a; color:#ddd; border:1px solid #444;
+  .btnrow button { flex:1; background:#fff; color:#333; border:1px solid #bbb;
     border-radius:4px; padding:4px; font-size:12px; cursor:pointer; }
-  .btnrow button:hover { background:#3a3a3a; }
+  .btnrow button:hover { background:#e6e6ea; }
   /* all sidebar OPTIONS share one font size (incl. the dropdown value + menu) */
   .subjlist label,
   #stat label, #mode label,
@@ -543,10 +588,10 @@ app.index_string = """<!DOCTYPE html>
      subject / OD / OS, so a 3-column grid lines them up. */
   .subjlist { display:grid; grid-template-columns:1fr 38px 38px; grid-auto-rows:16px;
     align-items:center; }
-  .subjlist label { display:flex; align-items:center; cursor:pointer; color:#9ecbff; }
+  .subjlist label { display:flex; align-items:center; cursor:pointer; color:#1a5fb4; }
   .subjlist input { width:12px; height:12px; margin:0 5px 0 0; }
   .subjhdr { display:grid; grid-template-columns:1fr 38px 38px; font-size:10px;
-    color:#777; text-transform:uppercase; letter-spacing:.5px; margin-bottom:2px; }
+    color:#666; text-transform:uppercase; letter-spacing:.5px; margin-bottom:2px; }
   .subjhdr span { padding-left:15px; }
   /* OLS: subject boxes only (a point is a subject). The 3n+2/3n children are
      the OD/OS boxes of each row. */
@@ -554,17 +599,16 @@ app.index_string = """<!DOCTYPE html>
   .subjlist.avg { grid-template-columns:1fr; }
   .subjlist.avg label:nth-child(3n+2), .subjlist.avg label:nth-child(3n) { display:none; }
   /* LME: eye boxes only; column 1 keeps the name, as inert text. */
-  .subjlist.lme label:nth-child(3n+1) { pointer-events:none; color:#bbb; }
+  .subjlist.lme label:nth-child(3n+1) { pointer-events:none; color:#555; }
   .subjlist.lme label:nth-child(3n+1) input { display:none; }
-  #stat label { display:inline-flex; align-items:center; color:#ddd; margin-right:18px; cursor:pointer; }
-  #mode label { display:flex; align-items:center; color:#ddd; margin-bottom:5px; cursor:pointer; }
+  #stat label { display:inline-flex; align-items:center; color:#222; margin-right:18px; cursor:pointer; }
+  #mode label { display:flex; align-items:center; color:#222; margin-bottom:5px; cursor:pointer; }
   #stat input, #mode input { margin-right:7px; flex-shrink:0; }
-  .ncount { font-size:12px; color:#7fd17f; margin-top:4px; }
+  .ncount { font-size:12px; color:#1a7f37; margin-top:4px; }
   #sidebar .dash-dropdown { color:#111; }
-  /* The figure area is ONE fixed 1249x626 canvas (see the size table in
-     fitStage below) that fitStage() scales to fit #stagewrap, like squeezing a
-     PNG. Every length here is an authored pixel, never a fraction of the
-     window, so Plotly measures once at startup and never redraws on resize. */
+  /* The figure area is ONE fixed 1475x626 canvas that fitStage() scales to fit
+     #stagewrap. Every length below is an authored pixel, never a fraction of
+     the window, so Plotly measures once at startup and never redraws. */
   #stagewrap { flex:1 1 auto; min-width:0; min-height:0; position:relative; overflow:hidden; }
   /*  575 = fig1 555 + 2x10 panel padding     658 = fig2/3 638 + 2x10
       626 = (402+20) + 16 gap + 188 table  ==  (285+20) + 16 + (285+20)
@@ -572,29 +616,28 @@ app.index_string = """<!DOCTYPE html>
   #figures { position:absolute; top:50%; left:50%; transform-origin:center;
     width:1475px; height:626px; display:flex; gap:16px; }
   .leftcol, .rightcol { display:flex; flex-direction:column; gap:16px; }
-  .figpanel { background:#fff; border-radius:6px; padding:10px;
-    box-shadow:0 1px 4px rgba(0,0,0,.4); }
-  /* height is authored, not measured: 188 is what the left column needs to
-     match the right one (see the size table above). The contents fit, so
-     overflow is hidden rather than auto — no scrollbar inside the stage. */
-  .statpanel { background:#1e1e1e; box-shadow:none; padding:12px; height:188px;
+  /* no border/shadow: the panels are white on a white page, so the figures
+     read as part of the article rather than as cards. */
+  .figpanel { background:#fff; border-radius:6px; padding:10px; }
+  /* 188 is what the left column needs to match the right (see the table above) */
+  .statpanel { padding:12px; height:188px;
     overflow:hidden; box-sizing:border-box; }
-  .avgtitle { font-size:14px; color:#eee; margin-bottom:10px; }
-  .avghint { font-size:11px; color:#777; }
+  .avgtitle { font-size:14px; color:#222; margin-bottom:10px; }
+  .avghint { font-size:11px; color:#666; }
   .avgtbl { border-collapse:collapse; width:100%; table-layout:fixed; }
-  .avgtbl th { font-size:12px; font-weight:normal; color:#999; text-align:center; padding:2px 8px;
+  .avgtbl th { font-size:12px; font-weight:normal; color:#666; text-align:center; padding:2px 8px;
     text-transform:uppercase; letter-spacing:.4px; }
   .avgtbl th.corner { text-align:left; }
   .avgtbl td { padding:3px 8px; font-size:12px; text-align:center; }
-  .avgtbl td.anm { text-align:left; color:#ddd; white-space:nowrap; }
-  .avgtbl td.region { text-align:left; color:#bbb; font-size:12px; font-weight:bold;
+  .avgtbl td.anm { text-align:left; color:#333; white-space:nowrap; }
+  .avgtbl td.region { text-align:left; color:#555; font-size:12px; font-weight:bold;
     text-transform:uppercase; letter-spacing:.4px; vertical-align:middle; }
   .avgtbl tr.avgrow { cursor:pointer; }
-  .avgtbl tr.avgrow:hover td { background:#2a2a2a; }
-  .avgtbl tr.avgrow.sel td { background:#26323f; }
+  .avgtbl tr.avgrow:hover td { background:#e6e6ea; }
+  .avgtbl tr.avgrow.sel td { background:#d8e6f5; }
   .avgtbl tr.avgrow.sel td.region { background:transparent; }
-  .avgtbl .aval { color:#fff; font-weight:600; font-variant-numeric:tabular-nums; }
-  .avgtbl .aval.sig { color:#ff383c; }
+  .avgtbl .aval { color:#111; font-weight:600; font-variant-numeric:tabular-nums; }
+  .avgtbl .aval.sig { color:#d02a2f; }
   g.annotation rect { rx:6px; ry:6px; }
 </style></head>
 <body>{%app_entry%}<footer>
@@ -605,9 +648,7 @@ app.index_string = """<!DOCTYPE html>
   // _from_url callback runs. Compares the 6 params SEMANTICALLY so encoding
   // differences never cause a spurious extra round-trip.
   if (!("BroadcastChannel" in window)) return;
-  var ORDER = ["exclude","stat","band","mac","disc","mode"];
-  var DEF = {exclude:"", stat:"R2m", band:"T1_mean_015",
-             mac:"All_1_3_gcc", disc:"All_um_", mode:"avg"};
+  var ORDER = __ORDER__, DEF = __DEFAULTS__;
   function canon(search) {
     var q = new URLSearchParams((search || "").replace(/^[?]/, ""));
     return ORDER.map(function (k) {
@@ -631,13 +672,10 @@ app.index_string = """<!DOCTYPE html>
 </script>
 <script>
 (function () {
-  // Fit the fixed 1249x626 stage into whatever room is left beside the sidebar,
-  // the way object-fit:contain would for an <img>: one CSS transform, uncapped
-  // and centred. Nothing here touches Plotly — the figures are drawn once at
-  // their native pixel size (autosize=False) and are SVG, so they stay crisp at
-  // any scale and never re-measure. This replaces the old per-figure resize
-  // relayout, which was also the only thing Fig 3's equal-aspect subplots could
-  // get stuck on.
+  // Fit the fixed stage into whatever room is left, the way object-fit:contain
+  // would for an <img>: one CSS transform, centred. Nothing here touches Plotly
+  // — the figures are drawn once at their native pixel size (autosize=False) and
+  // are SVG, so they stay crisp at any scale and never re-measure.
   var NATIVE_W = 1475, NATIVE_H = 626;
   function fitStage() {
     var wrap = document.getElementById('stagewrap');
@@ -659,7 +697,10 @@ app.index_string = """<!DOCTYPE html>
 })();
 </script>
 {%config%}{%scripts%}{%renderer%}</footer></body></html>"""
+    .replace("__ORDER__", JS_ORDER).replace("__DEFAULTS__", JS_DEFAULTS))
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=3000)
+    # 8050, not 3000: `myst start` takes 3000, and every URL in paper.md points
+    # here. Keep the two in sync.
+    app.run(debug=True, port=8050)

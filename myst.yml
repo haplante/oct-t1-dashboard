@@ -71,12 +71,12 @@ project:
   bibliography:
     - paper.bib
   resources:
-    - content/figure_1.ipynb
-    - content/figure_2.ipynb
-    - content/figure_3.ipynb
+    - content/opticnerve_core.py
+    - content/Dash_client.py
 site:
   template: article-theme # Or book-theme
   options:
+    style: static/paper.css # .figbox rules for the live figure embeds.
     favicon: static/favicon.ico # Production will override this for branding.
     logo: static/logo.png # Production will override this for branding.
     twitter: neurolibre

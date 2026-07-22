@@ -2,10 +2,10 @@
 resolve_view, and the Plotly builders. Imported by the Dash app, the Flask
 route, and the three notebooks."""
 
+import base64
 import warnings
 from functools import lru_cache
 from pathlib import Path
-import base64
 
 import numpy as np
 import pandas as pd
@@ -14,53 +14,6 @@ import statsmodels.formula.api as smf
 from plotly.colors import sample_colorscale
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-
-warnings.simplefilter("ignore")   # silence statsmodels convergence chatter
-
-# ---- state model -----------------------------------------------------------
-DEFAULTS = {"exclude": (), "stat": "R2m", "band": "T1_mean_015",
-            "mac": "All_1_3_gcc", "disc": "All_um_", "mode": "avg"}
-
-_STATS = ("R2m", "Rm")
-_BANDS = ("T1_mean_015", "T1_mean_05", "T1_mean_510", "T1_mean_1015")
-_MODES = ("avg", "lme")
-_ORDER = ("exclude", "stat", "band", "mac", "disc", "mode")
-
-
-def parse_params(mapping):
-    """Normalize a dict-like of raw query values into the 6 canonical params.
-
-    `exclude` holds two kinds of token: a bare "sub-0200" (whole subject, both
-    eyes) and a dotted "sub-0200.OD" (that eye only). Unknown tokens are dropped
-    so a hand-edited URL can never reach fit(). Sorted so it is a stable
-    lru_cache key.
-    """
-    g = mapping.get
-    exclude = g("exclude", "") or ""
-    exclude = tuple(sorted({s for s in (x.strip() for x in exclude.split(",")) if s in _VALID_EXCL}))
-    pick = lambda key, allowed: (g(key) if g(key) in allowed else DEFAULTS[key])
-    # mac/disc are clamped to the known sector metrics so a bad value can never
-    # reach fit()/groupby (which would KeyError -> HTTP 500 on the public route).
-    # MAC_METRICS/DISC_METRICS are module-level, defined below; resolved at call time.
-    return {
-        "exclude": exclude,
-        "stat": pick("stat", _STATS),
-        "band": pick("band", _BANDS),
-        "mac": pick("mac", MAC_METRICS),
-        "disc": pick("disc", DISC_METRICS),
-        "mode": pick("mode", _MODES),
-    }
-
-
-def serialize_params(params):
-    """Canonical query string, fixed key order, exclude joined by commas."""
-    parts = []
-    for k in _ORDER:
-        v = params[k]
-        v = ",".join(v) if k == "exclude" else v
-        parts.append(f"{k}={v}")
-    return "&".join(parts)
-
 
 # ============================================================================
 # CONFIGURATION  (mirrors the figure notebooks / the HTML dashboard)
@@ -73,10 +26,11 @@ N_SLICES, MIN_N = 46, 3    # Figure 1 profile
 
 C_OD, C_OS = "rgb(34,139,94)", "rgb(59,130,246)"   # right eye green, left eye blue
 
-# the four T1 bands: (column, label, colour)
+# the four T1 bands: (column, label, colour). This order is also the order
+# Figure 2 draws its regression lines in.
 T1_BANDS = [("T1_mean_015", "0–15 mm", "#2B2D42"), ("T1_mean_05", "0–5 mm", "#3B82F6"),
             ("T1_mean_510", "5–10 mm", "#228B5E"), ("T1_mean_1015", "10–15 mm", "#8B5CF6")]
-T1_COLS = ["T1_mean_05", "T1_mean_510", "T1_mean_1015", "T1_mean_015"]
+T1_COLS = [k for k, _, _ in T1_BANDS]
 BAND_LABEL = {k: lbl for k, lbl, _ in T1_BANDS}
 
 # Figure 2 default panels: (title, sector, x-axis label)
@@ -137,7 +91,7 @@ SUBJECTS = sorted(MERGED["MRI_ID"].unique())
 EYE_SEP = "."
 EYES_OF = {s: tuple(sorted(g)) for s, g in MERGED.groupby("MRI_ID")["Eye"]}
 ALL_EYES = tuple(f"{s}{EYE_SEP}{e}" for s in SUBJECTS for e in EYES_OF[s])
-_VALID_EXCL = frozenset(SUBJECTS) | frozenset(ALL_EYES)
+VALID_EXCLUDE = frozenset(SUBJECTS) | frozenset(ALL_EYES)
 
 
 def split_excluded(excluded):
@@ -149,16 +103,48 @@ def split_excluded(excluded):
     gone = {s for s in SUBJECTS if all(f"{s}{EYE_SEP}{e}" in eyes for e in EYES_OF[s])}
     return gone, eyes
 
+
+# ============================================================================
+# STATE MODEL — the 6 params that fully determine every figure
+# ============================================================================
+DEFAULTS = {"exclude": (), "stat": "R2m", "band": "T1_mean_015",
+            "mac": "All_1_3_gcc", "disc": "All_um_", "mode": "avg"}
+PARAM_ORDER = ("exclude", "stat", "band", "mac", "disc", "mode")
+_ALLOWED = {"stat": ("R2m", "Rm"), "band": tuple(T1_COLS), "mode": ("avg", "lme"),
+            "mac": MAC_METRICS, "disc": DISC_METRICS}
+
+
+def parse_params(mapping):
+    """Normalize a dict-like of raw query values into the 6 canonical params.
+
+    Every value is clamped to a known one, so a hand-edited URL can never reach
+    fit()/groupby (which would KeyError -> HTTP 500 on the public route).
+    `exclude` takes a bare "sub-0200" (whole subject) or a dotted "sub-0200.OD"
+    (that eye only); it is sorted so it makes a stable lru_cache key.
+    """
+    g = mapping.get
+    tokens = (t.strip() for t in (g("exclude", "") or "").split(","))
+    params = {"exclude": tuple(sorted({t for t in tokens if t in VALID_EXCLUDE}))}
+    for key, allowed in _ALLOWED.items():
+        params[key] = g(key) if g(key) in allowed else DEFAULTS[key]
+    return {k: params[k] for k in PARAM_ORDER}
+
+
+def serialize_params(params):
+    """Canonical query string, fixed key order, exclude joined by commas."""
+    return "&".join(f"{k}={','.join(params[k]) if k == 'exclude' else params[k]}"
+                    for k in PARAM_ORDER)
+
+
 _uri = lambda p: "data:image/jpeg;base64," + base64.b64encode(Path(p).read_bytes()).decode()
 MAC_URI, DISC_URI = _uri(DATA / "macula_OD.jpg"), _uri(DATA / "disc_OD.jpg")
 
 AX = dict(color="black", linecolor="black", showline=True, mirror=False, showgrid=False,
           zeroline=False, ticks="outside", tickcolor="black", fixedrange=True)
 
-# Every figure draws on a FIXED pixel canvas — never autosize/responsive. The
-# dashboard, the standalone /figure/<id> iframe pages and the notebooks all read
-# these same numbers, then scale the drawn result visually with a CSS transform
-# (like squeezing a PNG), so Plotly measures once and never redraws on resize.
+# Every figure draws on a FIXED pixel canvas — never autosize/responsive. Every
+# consumer (dashboard, /figure/<id> pages, paper.md) scales the drawn result with
+# a CSS transform instead, so Plotly measures once and never redraws on resize.
 FIG_SIZE = {"fig1": (555, 402), "fig2": (638, 285), "fig3": (638, 285)}
 _canvas = lambda figid: dict(zip(("autosize", "width", "height"), (False,) + FIG_SIZE[figid]))
 
@@ -217,7 +203,9 @@ def fit(excluded, sector, band, mode):
     if len(d) < 6 or d["MRI_ID"].nunique() < 5:
         return None
     try:
-        res = smf.mixedlm(f"{band} ~ {sector}", d, groups=d["MRI_ID"]).fit(reml=True)
+        with warnings.catch_warnings():          # statsmodels convergence chatter
+            warnings.simplefilter("ignore")
+            res = smf.mixedlm(f"{band} ~ {sector}", d, groups=d["MRI_ID"]).fit(reml=True)
     except Exception:
         return None
     b0, b1 = res.fe_params["Intercept"], res.fe_params[sector]
@@ -272,10 +260,6 @@ def wedge(th1, th2, ri, ro, n=60):
     return np.r_[x, x[0]], np.r_[y, y[0]]
 
 
-# regression lines are drawn in the notebook's band order (0-15 first)
-T1_COLS_ORDER = [b[0] for b in T1_BANDS]
-
-
 # ============================================================================
 # FIGURE 1 — T1 profile along the optic nerve
 # ============================================================================
@@ -319,10 +303,9 @@ def build_fig1(view):
 # ============================================================================
 # FIGURE 2 — correlation with 4 regression lines per panel
 # ============================================================================
-F2_LABEL_SIZE = 10
-F2_LABEL_BOLD = False
-F2_LABEL_DX = 10
-F2_LABEL_DY = 8
+F2_LABEL = dict(showarrow=False, font=dict(size=10),
+                bgcolor="rgba(255,255,255,0.7)", borderpad=1)
+F2_LABEL_DX, F2_LABEL_DY = 10, 8      # nudge the line label clear of the line
 
 
 def _cdata(subj, eye, ghost):
@@ -348,8 +331,8 @@ def build_fig2(view):
              (PANELS[1][0], PANELS[1][2], view["disc"], "disc")], start=1):
         leg = "legend" if col == 1 else "legend2"
         panel = view["panel_fits"][key]
-        fits = [panel["fits"][b] for b in T1_COLS_ORDER]
-        pf = [panel["pf"][b] for b in T1_COLS_ORDER]
+        fits = [panel["fits"][b] for b in T1_COLS]
+        pf = [panel["pf"][b] for b in T1_COLS]
         for (band, lbl, c), r, q in zip(T1_BANDS, fits, pf):
             if not r:
                 continue
@@ -393,11 +376,9 @@ def build_fig2(view):
                 legendgroup=grp, visible=vis, row=1, col=col, line=dict(color=c, width=2),
                 hoverinfo="skip", name=name)
             if vis is True:
-                fig.add_annotation(x=xs[0], y=ys[0], row=1, col=col,
-                    text=f"<b>{name}</b>" if F2_LABEL_BOLD else name, showarrow=False,
+                fig.add_annotation(x=xs[0], y=ys[0], row=1, col=col, text=name,
                     xanchor="left", yanchor="bottom", xshift=F2_LABEL_DX, yshift=F2_LABEL_DY,
-                    font=dict(size=F2_LABEL_SIZE, color=c),
-                    bgcolor="rgba(255,255,255,0.7)", borderpad=1)
+                    **{**F2_LABEL, "font": dict(size=10, color=c)})
         # grey dotted reference: default sector at the selected band (only when a
         # non-default sector is selected) — lets you compare against the baseline.
         ref = panel.get("ref")
@@ -410,11 +391,9 @@ def build_fig2(view):
                 row=1, col=col, line=dict(color="#999", width=1.5, dash="dot"),
                 hoverinfo="skip", name=rname)
             # labelled at the RIGHT end so it cannot land on the band label above
-            fig.add_annotation(x=rx[1], y=ry[1], row=1, col=col,
-                text=f"<b>{rname}</b>" if F2_LABEL_BOLD else rname, showarrow=False,
+            fig.add_annotation(x=rx[1], y=ry[1], row=1, col=col, text=rname,
                 xanchor="right", yanchor="top", xshift=-F2_LABEL_DX, yshift=-F2_LABEL_DY,
-                font=dict(size=F2_LABEL_SIZE, color="#999"),
-                bgcolor="rgba(255,255,255,0.7)", borderpad=1)
+                **{**F2_LABEL, "font": dict(size=10, color="#999")})
         fig.update_xaxes(title=dict(text=xlab, standoff=5), row=1, col=col, **AX)
         fig.update_yaxes(title=dict(text=y_title), row=1, col=col, **AX)
 
@@ -500,46 +479,42 @@ def resolve_view(exclude=(), stat="R2m", band="T1_mean_015",
     params = parse_params({"exclude": ",".join(exclude) if exclude else "",
                            "stat": stat, "band": band, "mac": mac,
                            "disc": disc, "mode": mode})
-    excluded = params["exclude"]
+    excluded, band, mode = params["exclude"], params["band"], params["mode"]
     gone, out_eyes = split_excluded(excluded)
     included = [s for s in SUBJECTS if s not in gone]
-    n_eyes = sum(t not in out_eyes for t in ALL_EYES)
 
-    # Fig 3 / averages-table fits for the SELECTED band (used to colour wedges)
-    mac_fits, mac_pf = fit_family(excluded, MAC_METRICS, params["band"], params["mode"])
-    disc_fits, disc_pf = fit_family(excluded, DISC_METRICS, params["band"], params["mode"])
+    # every metric family at every band, for the averages table. FDR is applied
+    # within one family at one band.
+    avg_fits, avg_pf = {}, {}
+    for b in T1_COLS:
+        m_fits, m_pf = fit_family(excluded, MAC_METRICS, b, mode)
+        d_fits, d_pf = fit_family(excluded, DISC_METRICS, b, mode)
+        avg_fits[b] = {"mac": m_fits, "disc": d_fits}
+        avg_pf[b] = {"mac": m_pf, "disc": d_pf}
 
     # Fig 2 panels fit every band against the selected sector; FDR within panel
     panel_fits = {}
     for key, sector in (("mac", params["mac"]), ("disc", params["disc"])):
-        fits = [fit(excluded, sector, b, params["mode"]) for b in T1_COLS_ORDER]
+        fits = [fit(excluded, sector, b, mode) for b in T1_COLS]
         pf = bh_fdr([f["p"] if f else float("nan") for f in fits])
         # reference: the DEFAULT sector's fit at the selected band, drawn as a grey
         # dotted line when a non-default sector is selected (mirrors index.html).
         default_sector = DEF_MAC if key == "mac" else DEF_DISC
-        ref = (fit(excluded, default_sector, params["band"], params["mode"])
-               if sector != default_sector else None)
-        panel_fits[key] = {"sector": sector,
-                           "default_sector": default_sector, "ref": ref,
-                           "fits": {b: f for b, f in zip(T1_COLS_ORDER, fits)},
-                           "pf": {b: pf[i] for i, b in enumerate(T1_COLS_ORDER)}}
-
-    # averages table needs FDR per family per band (and the fits themselves, for
-    # the dashboard's avg table to read without calling fit() directly)
-    avg_pf = {}
-    avg_fits = {}
-    for b, _, _ in T1_BANDS:
-        m_fits, m_pf = fit_family(excluded, MAC_METRICS, b, params["mode"])
-        d_fits, d_pf = fit_family(excluded, DISC_METRICS, b, params["mode"])
-        avg_pf[b] = {"mac": m_pf, "disc": d_pf}
-        avg_fits[b] = {"mac": m_fits, "disc": d_fits}
+        panel_fits[key] = {
+            "sector": sector, "default_sector": default_sector,
+            "ref": None if sector == default_sector else avg_fits[band][key][default_sector],
+            "fits": dict(zip(T1_COLS, fits)),
+            "pf": dict(zip(T1_COLS, pf)),
+        }
 
     return {
         "params": params, "excluded": excluded,
-        "subjects": included, "n": len(included), "n_eyes": n_eyes,
-        "stat": params["stat"], "band": params["band"], "mode": params["mode"],
+        "subjects": included, "n": len(included),
+        "n_eyes": sum(t not in out_eyes for t in ALL_EYES),
+        "stat": params["stat"], "band": band, "mode": mode,
         "mac": params["mac"], "disc": params["disc"],
-        "mac_fits": mac_fits, "mac_pf": mac_pf,
-        "disc_fits": disc_fits, "disc_pf": disc_pf,
+        # Fig 3 colours its wedges from the selected band's family fits
+        "mac_fits": avg_fits[band]["mac"], "mac_pf": avg_pf[band]["mac"],
+        "disc_fits": avg_fits[band]["disc"], "disc_pf": avg_pf[band]["disc"],
         "panel_fits": panel_fits, "avg_pf": avg_pf, "avg_fits": avg_fits,
     }
