@@ -23,7 +23,7 @@ from dash import Dash, dcc, html, Input, Output, State, ctx, ALL, no_update
 from opticnerve_core import (
     T1_BANDS, DEF_MAC, DEF_DISC, MAC_AVG, DISC_AVG, SUBJECTS, stat_val,
     stat_lbl, resolve_view, DEFAULTS, build_fig1, build_fig2, build_fig3,
-    parse_params, serialize_params, ALL_EYES, EYES_OF, EYE_SEP,
+    parse_params, serialize_params, ALL_EYES, EYES_OF, EYE_SEP, FIG_SIZE,
 )
 
 
@@ -85,16 +85,17 @@ CORS(server, resources={r"/opticnerve/*": {"origins": "*"}})
 _BUILDERS = {"fig1": build_fig1, "fig2": build_fig2, "fig3": build_fig3}
 
 # Native pixel canvas each standalone /figure/<figid> page renders at (no
-# autosize/responsive). paper.md scales this down visually with a CSS
-# transform to fit the article column — see the per-figure scale factors
-# there, which must be recomputed (720 / width) if these change.
-FIG_NATIVE_SIZE = {"fig1": (555, 402), "fig2": (638, 285), "fig3": (638, 285)}
+# autosize/responsive) — the same canvas the builders draw on, and the same one
+# the dashboard's own stage is laid out from. paper.md scales this down visually
+# with a CSS transform to fit the article column — see the per-figure scale
+# factors there, which must be recomputed (720 / width) if these change.
+FIG_NATIVE_SIZE = FIG_SIZE
 
 # PNG size for each standalone figure's own "download as png" modebar button
 # (independent of FIG_NATIVE_SIZE / the on-screen paper.md scale). Edit these
 # to change what gets downloaded; scale is the extra DPI multiplier (600/96
 # matches the dashboard's own GRAPH_CFG export resolution).
-PNG_EXPORT_SIZE = {"fig1": (555, 402), "fig2": (638, 285), "fig3": (638, 285)}
+PNG_EXPORT_SIZE = dict(FIG_SIZE)
 PNG_EXPORT_SCALE = 600 / 96
 
 
@@ -246,12 +247,12 @@ def figure_page(figid):
     return server.response_class(page, mimetype="text/html")
 
 GRAPH_CFG = lambda name, w, h: dict(
-    scrollZoom=False, displaylogo=False, displayModeBar="hover", responsive=True,
+    scrollZoom=False, displaylogo=False, displayModeBar="hover", responsive=False,
     modeBarButtonsToRemove=["select2d", "lasso2d", "zoom2d", "pan2d", "zoomIn2d",
                             "zoomOut2d", "autoScale2d", "resetScale2d"],
     toImageButtonOptions=dict(format="png", filename=name, width=w, height=h, scale=600 / 96))
 
-app.layout = html.Div([
+app.layout = html.Div(id="root", children=[
     dcc.Location(id="url", refresh=False),
     dcc.Store(id="postbridge-dummy"),
     dcc.Store(id="all-subjects", data=SUBJECTS),   # for the clientside URL writer
@@ -292,21 +293,25 @@ app.layout = html.Div([
             html.Hr(),
             html.Div([html.Button("Reset all", id="reset")], className="btnrow"),
         ]),
-        # ---- figures ----
-        html.Div(id="figures", children=[
-            html.Div(className="leftcol", children=[
-                html.Section(className="figpanel", children=[
-                    dcc.Graph(id="fig1", style={"height": "100%"},
-                              config=GRAPH_CFG("fig01_T1_profile", 555, 402))]),
-                html.Section(className="figpanel statpanel", children=[
-                    html.Div(id="avgbox")]),
+        # ---- figures: a fixed-size stage, scaled to fit by fitStage() below ----
+        html.Div(id="stagewrap", children=[
+            html.Div(id="figures", children=[
+                html.Div(className="leftcol", children=[
+                    html.Section(className="figpanel", children=[
+                        dcc.Graph(id="fig1",
+                                  config=GRAPH_CFG("fig01_T1_profile", *FIG_SIZE["fig1"]))]),
+                    html.Section(className="figpanel statpanel", children=[
+                        html.Div(id="avgbox")]),
+                ]),
+                html.Div(className="rightcol", children=[
+                    html.Section(className="figpanel", children=[
+                        dcc.Graph(id="fig2",
+                                  config=GRAPH_CFG("fig02_regression", *FIG_SIZE["fig2"]))]),
+                    html.Section(className="figpanel", children=[
+                        dcc.Graph(id="fig3",
+                                  config=GRAPH_CFG("fig03_OCT_maps", *FIG_SIZE["fig3"]))]),
+                ]),
             ]),
-            html.Section(className="figpanel fig2", children=[
-                dcc.Graph(id="fig2", style={"height": "100%"},
-                          config=GRAPH_CFG("fig02_regression", 638, 285))]),
-            html.Section(className="figpanel fig3", children=[
-                dcc.Graph(id="fig3", style={"height": "100%"},
-                          config=GRAPH_CFG("fig03_OCT_maps", 638, 285))]),
         ]),
     ]),
 ])
@@ -491,14 +496,22 @@ app.index_string = """<!DOCTYPE html>
 <html><head>{%metas%}<title>{%title%}</title>{%favicon%}{%css%}
 <style>
   html, body { height:100%; margin:0; overflow:hidden; }
-  body { display:flex; flex-direction:column; background:#111; color:#eee; font-family:Arial,Helvetica,sans-serif; }
+  body { background:#111; color:#eee; font-family:Arial,Helvetica,sans-serif; }
+  /* Dash buries our layout under several plain-block divs of its own
+     (#react-entry-point > #_dash-global-error-container > div >
+     #_dash-app-content > #root), so a flex chain from <body> down cannot reach
+     #app: it would size to its CONTENT (the tall sidebar) instead of to the
+     viewport, which is what pushed the figures off the bottom of the screen.
+     position:fixed lifts #root out of that chain entirely and pins it to the
+     viewport, without this file having to know Dash's internal div names. */
+  #root { position:fixed; inset:0; display:flex; flex-direction:column; }
   h1 { flex:0 0 auto; text-align:center; font-size:22px; margin:14px 0 8px; }
   /* row-reverse puts the sidebar on the RIGHT while keeping the controls first
      in the DOM (so keyboard/screen-reader order stays controls -> figures). */
   #app { flex:1 1 auto; min-height:0; display:flex; flex-direction:row-reverse;
     align-items:stretch; gap:16px; padding:0 16px 16px; }
   #sidebar { width:210px; flex:0 0 210px; background:#1e1e1e; border-radius:6px;
-    padding:14px; overflow-y:auto; }
+    padding:14px; min-height:0; overflow-y:auto; }
   #sidebar h3 { margin:0 0 8px; font-size:16px; }
   #sidebar .hint { font-size:12px; color:#999; margin-bottom:10px; line-height:1.4; }
   #sidebar .lbl { font-size:14px; color:#aaa; margin-bottom:6px; }
@@ -519,15 +532,24 @@ app.index_string = """<!DOCTYPE html>
   #stat input, #mode input { margin-right:7px; flex-shrink:0; }
   .ncount { font-size:12px; color:#7fd17f; margin-top:8px; }
   #sidebar .dash-dropdown { color:#111; }
-  #figures { flex:1 1 auto; min-width:0; display:grid; gap:16px;
-    grid-template-columns:7fr 8fr; grid-template-rows:1fr 1fr;
-    grid-template-areas:"f1 f2" "f1 f3"; }
-  .leftcol { grid-area:f1; display:flex; flex-direction:column; gap:16px; min-height:0; }
-  .leftcol .figpanel:first-child { flex:1 1 auto; min-height:0; }
-  .fig2 { grid-area:f2; } .fig3 { grid-area:f3; }
-  .figpanel { background:#fff; border-radius:6px; padding:10px; min-width:0; min-height:0;
+  /* The figure area is ONE fixed 1249x626 canvas (see the size table in
+     fitStage below) that fitStage() scales to fit #stagewrap, like squeezing a
+     PNG. Every length here is an authored pixel, never a fraction of the
+     window, so Plotly measures once at startup and never redraws on resize. */
+  #stagewrap { flex:1 1 auto; min-width:0; min-height:0; position:relative; overflow:hidden; }
+  /*  575 = fig1 555 + 2x10 panel padding     658 = fig2/3 638 + 2x10
+      626 = (402+20) + 16 gap + 188 table  ==  (285+20) + 16 + (285+20)
+     1249 = 575 + 16 gap + 658                 <- the two columns agree exactly */
+  #figures { position:absolute; top:50%; left:50%; transform-origin:center;
+    width:1249px; height:626px; display:flex; gap:16px; }
+  .leftcol, .rightcol { display:flex; flex-direction:column; gap:16px; }
+  .figpanel { background:#fff; border-radius:6px; padding:10px;
     box-shadow:0 1px 4px rgba(0,0,0,.4); }
-  .statpanel { background:#1e1e1e; box-shadow:none; padding:12px; overflow:auto; flex:0 0 auto; }
+  /* height is authored, not measured: 188 is what the left column needs to
+     match the right one (see the size table above). The contents fit, so
+     overflow is hidden rather than auto — no scrollbar inside the stage. */
+  .statpanel { background:#1e1e1e; box-shadow:none; padding:12px; height:188px;
+    overflow:hidden; box-sizing:border-box; }
   .avgtitle { font-size:14px; color:#eee; margin-bottom:10px; }
   .avghint { font-size:11px; color:#777; }
   .avgtbl { border-collapse:collapse; width:100%; table-layout:fixed; }
@@ -535,7 +557,7 @@ app.index_string = """<!DOCTYPE html>
     text-transform:uppercase; letter-spacing:.4px; }
   .avgtbl th.corner { text-align:left; }
   .avgtbl td { padding:3px 8px; font-size:12px; text-align:center; }
-  .avgtbl td.anm { text-align:left; color:#ddd; }
+  .avgtbl td.anm { text-align:left; color:#ddd; white-space:nowrap; }
   .avgtbl td.region { text-align:left; color:#bbb; font-size:12px; font-weight:bold;
     text-transform:uppercase; letter-spacing:.4px; vertical-align:middle; }
   .avgtbl tr.avgrow { cursor:pointer; }
@@ -580,25 +602,31 @@ app.index_string = """<!DOCTYPE html>
 </script>
 <script>
 (function () {
-  // Fig 3's two subplots use scaleanchor/scaleratio (equal-aspect wedge maps),
-  // which is the known trouble case for Plotly's resize ResizeObserver: it can
-  // get stuck reporting a stale (shrunk) size after a shrink->grow cycle. Force
-  // an explicit relayout with the freshly measured container size on window
-  // resize, rather than trusting Plotly.Plots.resize()'s own re-measurement
-  // (Plotly attaches "js-plotly-plot" to #fig3 itself, not a child of it).
-  var t;
-  function resizeFig3() {
-    var gd = document.getElementById('fig3');
-    if (!gd || !window.Plotly || !gd._fullLayout) return;
-    var rect = gd.getBoundingClientRect();
-    if (rect.width > 0 && rect.height > 0) {
-      Plotly.relayout(gd, {width: rect.width, height: rect.height});
-    }
+  // Fit the fixed 1249x626 stage into whatever room is left beside the sidebar,
+  // the way object-fit:contain would for an <img>: one CSS transform, uncapped
+  // and centred. Nothing here touches Plotly — the figures are drawn once at
+  // their native pixel size (autosize=False) and are SVG, so they stay crisp at
+  // any scale and never re-measure. This replaces the old per-figure resize
+  // relayout, which was also the only thing Fig 3's equal-aspect subplots could
+  // get stuck on.
+  var NATIVE_W = 1249, NATIVE_H = 626;
+  function fitStage() {
+    var wrap = document.getElementById('stagewrap');
+    var stage = document.getElementById('figures');
+    if (!wrap || !stage) return;             // not mounted yet
+    var w = wrap.clientWidth, h = wrap.clientHeight;
+    if (!w || !h) return;
+    var s = Math.min(w / NATIVE_W, h / NATIVE_H);
+    stage.style.transform = 'translate(-50%, -50%) scale(' + s + ')';
   }
-  window.addEventListener('resize', function () {
-    clearTimeout(t);
-    t = setTimeout(resizeFig3, 150);
-  });
+  // Dash mounts the layout after this script runs, so watch for the stage
+  // appearing as well as for later resizes.
+  var ro = new ResizeObserver(fitStage);
+  new MutationObserver(function () {
+    var wrap = document.getElementById('stagewrap');
+    if (wrap && !wrap._fitted) { wrap._fitted = true; ro.observe(wrap); fitStage(); }
+  }).observe(document.body, {childList: true, subtree: true});
+  window.addEventListener('resize', fitStage);
 })();
 </script>
 {%config%}{%scripts%}{%renderer%}</footer></body></html>"""

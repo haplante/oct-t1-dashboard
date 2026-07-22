@@ -4,9 +4,9 @@ Run:  python test_exclude.py
 """
 import numpy as np
 
-from opticnerve_core import (ALL_EYES, DEF_MAC, DEFAULTS, EYES_OF, EYE_SEP, SUBJECTS,
-                             build_fig1, build_fig2, fit, parse_params, resolve_view,
-                             serialize_params, split_excluded)
+from opticnerve_core import (ALL_EYES, DEF_MAC, DEFAULTS, EYES_OF, EYE_SEP, FIG_SIZE,
+                             SUBJECTS, build_fig1, build_fig2, build_fig3, fit,
+                             parse_params, resolve_view, serialize_params, split_excluded)
 
 band = DEFAULTS["band"]
 s0 = fit((), DEF_MAC, band, "avg")["subj"][0]   # a subject that is actually plotted
@@ -41,5 +41,11 @@ assert (s0, eye0, 1) in toks, "ghost point must be clickable back in"
 assert any(t[2] == 0 for t in toks)
 build_fig1(v)                                                     # per-eye profile filter
 assert build_fig1(resolve_view(exclude=(s0,)))                    # whole subject out
+
+# ---- fixed pixel canvas: the CSS stage is laid out from these numbers --------
+for figid, build in (("fig1", build_fig1), ("fig2", build_fig2), ("fig3", build_fig3)):
+    lay = build(resolve_view()).layout
+    assert (lay.width, lay.height) == FIG_SIZE[figid], figid
+    assert lay.autosize is False, f"{figid} must not autosize — the stage scales it"
 
 print("ok")

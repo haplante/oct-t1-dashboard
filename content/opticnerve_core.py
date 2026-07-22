@@ -155,6 +155,13 @@ MAC_URI, DISC_URI = _uri(DATA / "macula_OD.jpg"), _uri(DATA / "disc_OD.jpg")
 AX = dict(color="black", linecolor="black", showline=True, mirror=False, showgrid=False,
           zeroline=False, ticks="outside", tickcolor="black", fixedrange=True)
 
+# Every figure draws on a FIXED pixel canvas — never autosize/responsive. The
+# dashboard, the standalone /figure/<id> iframe pages and the notebooks all read
+# these same numbers, then scale the drawn result visually with a CSS transform
+# (like squeezing a PNG), so Plotly measures once and never redraws on resize.
+FIG_SIZE = {"fig1": (555, 402), "fig2": (638, 285), "fig3": (638, 285)}
+_canvas = lambda figid: dict(zip(("autosize", "width", "height"), (False,) + FIG_SIZE[figid]))
+
 # ============================================================================
 # STATISTICS
 # ============================================================================
@@ -299,7 +306,7 @@ def build_fig1(view):
             error_y=dict(type="data", array=sd, visible=True, color=col, thickness=1.2, width=4),
             hovertemplate=f"mm %{{x}}<br>T₁ %{{y:.0f}} ms<extra>{eye}</extra>")
     fig.update_layout(
-        autosize=True, paper_bgcolor="white", plot_bgcolor="white", dragmode=False,
+        **_canvas("fig1"), paper_bgcolor="white", plot_bgcolor="white", dragmode=False,
         font=dict(color="black", family="DejaVu Sans, Arial, sans-serif", size=14),
         title=dict(text="T₁ as a function of position along the ON", x=0.5, xanchor="center"),
         margin=dict(l=70, r=10, t=45, b=45),
@@ -392,7 +399,8 @@ def build_fig2(view):
     leg_style = dict(bgcolor="rgba(255,255,255,0.7)", bordercolor="#ccc", borderwidth=1,
                      font=dict(size=10), xanchor="right", yanchor="top", y=0.99,
                      groupclick="togglegroup", tracegroupgap=0, itemwidth=30)
-    fig.update_layout(autosize=True, paper_bgcolor="white", plot_bgcolor="white", dragmode=False,
+    fig.update_layout(**_canvas("fig2"), paper_bgcolor="white", plot_bgcolor="white",
+        dragmode=False,
         font=dict(color="black", family="DejaVu Sans, Arial, sans-serif", size=13),
         margin=dict(l=70, r=10, t=40, b=45),
         legend=dict(**leg_style, x=0.43), legend2=dict(**leg_style, x=0.99))
@@ -458,7 +466,7 @@ def build_fig3(view):
             colorbar=dict(title=dict(text=stat_lbl(stat), side="top"), x=0.98, len=0.85,
                           thickness=12, tickfont=dict(color="black"))))
     axb = dict(range=[-LIM, LIM], visible=False, fixedrange=True)
-    fig.update_layout(autosize=True, paper_bgcolor="white", plot_bgcolor="white",
+    fig.update_layout(**_canvas("fig3"), paper_bgcolor="white", plot_bgcolor="white",
         font=dict(color="black", family="DejaVu Sans, Arial, sans-serif"), dragmode=False,
         margin=dict(l=0, r=0, t=30, b=15), showlegend=False, annotations=ann,
         xaxis=dict(**axb, domain=[0, 0.5], scaleanchor="y", scaleratio=1), yaxis=dict(**axb, domain=[0, 1]),
