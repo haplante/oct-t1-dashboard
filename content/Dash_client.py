@@ -127,9 +127,12 @@ def build_avg_table(view):
                 className="avgrow sel" if metric == selected else "avgrow"))
         return out
 
+    bands = view["bands"]
     header = html.Thead(html.Tr(
         [html.Th("T₁ sector", className="corner", colSpan=2)]
-        + [html.Th(lbl) for _, lbl, _ in T1_BANDS]))
+        + [html.Th(lbl, className=("prim" if k == view["band"] else
+                                   "on" if k in bands else ""))
+           for k, lbl, _ in T1_BANDS]))
     body = html.Tbody(
         rows("Macula (GCC)", MAC_AVG, "mac", view["mac"])
         + rows("Optic Disc (RNFL)", DISC_AVG, "disc", view["disc"]))
@@ -722,6 +725,8 @@ app.index_string = ("""<!DOCTYPE html>
   .avgtbl th { font-size:12px; font-weight:normal; color:#666; text-align:center; padding:2px 8px;
     text-transform:uppercase; letter-spacing:.4px; }
   .avgtbl th.corner { text-align:left; }
+  .avgtbl th.on { color:#333; background:#eef4fb; }
+  .avgtbl th.prim { color:#111; background:#d8e6f5; font-weight:bold; }
   .avgtbl td { padding:3px 8px; font-size:12px; text-align:center; }
   .avgtbl td.anm { text-align:left; color:#333; white-space:nowrap; }
   .avgtbl td.region { text-align:left; color:#555; font-size:12px; font-weight:bold;
