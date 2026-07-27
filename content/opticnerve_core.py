@@ -319,7 +319,7 @@ def build_fig1(view):
 # ============================================================================
 # FIGURE 2 — correlation with 4 regression lines per panel
 # ============================================================================
-F2_LABEL = dict(showarrow=False, font=dict(size=10),
+F2_LABEL = dict(showarrow=False, font=dict(size=10), xanchor="left", yanchor="bottom",
                 bgcolor="rgba(255,255,255,0.7)", borderpad=1)
 
 # Label placement geometry, derived from the fig2 canvas and the subplot layout
@@ -441,6 +441,7 @@ def _cdata(subj, eye, ghost):
 
 def build_fig2(view):
     mode, stat, sel_band = view["mode"], view["stat"], view["band"]
+    shown = tuple(view["bands"])           # sel_band == shown[0], the primary
     y_title = ("marginal ON T₁ (ms)" if mode == "lme" else "ON T₁ (ms)")
     fig = make_subplots(rows=1, cols=2, horizontal_spacing=0.12,
                         subplot_titles=[f"Macula – {sector_name(view['mac'])}",
@@ -452,10 +453,11 @@ def build_fig2(view):
         panel = view["panel_fits"][key]
         fits = [panel["fits"][b] for b in T1_COLS]
         pf = [panel["pf"][b] for b in T1_COLS]
+        specs, points, xs_all, ys_all = [], [], [], []
         for (band, lbl, c), r, q in zip(T1_BANDS, fits, pf):
             if not r:
                 continue
-            vis = True if band == sel_band else "legendonly"
+            vis = True if band in shown else "legendonly"
             grp = f"{col}-{band}"
             x, y = np.array(r["x"]), np.array(r["y"])
             cd = _cdata(r["subj"], r["eye"], False)
@@ -494,10 +496,14 @@ def build_fig2(view):
             fig.add_scatter(x=xs, y=ys, mode="lines", legend=leg,
                 legendgroup=grp, visible=vis, row=1, col=col, line=dict(color=c, width=2),
                 hoverinfo="skip", name=name)
+            # Every band is labelled, checked or not, so an unchecked one can be
+            # clicked on. Ranges cover every band's line so a pale label always
+            # has its own line on-panel, and so the axes hold still on a toggle.
+            specs.append((band, name, c, (xs[0], ys[0]), (xs[1], ys[1])))
+            xs_all += [xs[0], xs[1]] + list(x) + list(r["gx"])
+            ys_all += [ys[0], ys[1]] + list(y) + list(r["gy"])
             if vis is True:
-                fig.add_annotation(x=xs[0], y=ys[0], row=1, col=col, text=name,
-                    xanchor="left", yanchor="bottom", xshift=F2_LABEL_DX, yshift=F2_LABEL_DY,
-                    **{**F2_LABEL, "font": dict(size=10, color=c)})
+                points += list(zip(x, y)) + list(zip(r["gx"], r["gy"]))
         # grey dotted reference: default sector at the selected band (only when a
         # non-default sector is selected) — lets you compare against the baseline.
         ref = panel.get("ref")
@@ -509,12 +515,26 @@ def build_fig2(view):
             fig.add_scatter(x=rx, y=ry, mode="lines", legend=leg,
                 row=1, col=col, line=dict(color="#999", width=1.5, dash="dot"),
                 hoverinfo="skip", name=rname)
-            # labelled at the RIGHT end so it cannot land on the band label above
-            fig.add_annotation(x=rx[1], y=ry[1], row=1, col=col, text=rname,
-                xanchor="right", yanchor="top", xshift=-F2_LABEL_DX, yshift=-F2_LABEL_DY,
-                **{**F2_LABEL, "font": dict(size=10, color="#999")})
-        fig.update_xaxes(title=dict(text=xlab, standoff=5), row=1, col=col, **AX)
-        fig.update_yaxes(title=dict(text=y_title), row=1, col=col, **AX)
+            specs.append((None, rname, "#999", (rx[0], ry[0]), (rx[1], ry[1])))
+            xs_all += [rx[0], rx[1]]
+            ys_all += [ry[0], ry[1]]
+        xr, yr = _padded_range(xs_all), _padded_range(ys_all)
+        # most important first: the checked bands in selection order (primary
+        # first), then the reference line, then the unchecked ones
+        pos = {b: i for i, b in enumerate(shown)}
+        rank = lambda s: ((pos[s[0]], 0) if s[0] in pos
+                          else (90, 1) if s[0] is None
+                          else (91, T1_COLS.index(s[0])))
+        specs.sort(key=rank)
+        for (band, text, colour, p0, p1), (ax, ay) in zip(
+                specs, _place_labels([(s[1], s[3], s[4]) for s in specs], points, xr, yr)):
+            fig.add_annotation(x=ax, y=ay, row=1, col=col, text=text,
+                name=band, captureevents=band is not None,
+                opacity=1.0 if band in pos else 0.45,
+                **{**F2_LABEL, "font": dict(size=10, color=colour)})
+        fig.update_xaxes(title=dict(text=xlab, standoff=5), row=1, col=col,
+                         range=xr, **AX)
+        fig.update_yaxes(title=dict(text=y_title), row=1, col=col, range=yr, **AX)
 
     fig.update_layout(**_canvas("fig2"), paper_bgcolor="white", plot_bgcolor="white",
         dragmode=False, showlegend=False,
