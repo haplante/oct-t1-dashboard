@@ -80,6 +80,22 @@ function toggleBand(band, name) {
 }
 """.replace("__BANDS__", json.dumps([k for k, _, _ in T1_BANDS])))
 
+T1_KEYS = [k for k, _, _ in T1_BANDS]
+
+
+def toggle_band(bands, name):
+    """Check or uncheck one T1 band. Twin of toggleBand() in _BAND_JS.
+
+    Order is selection order and bands[0] is the primary, so a newly checked
+    band goes LAST — checking never steals the primary. The set is never
+    emptied: Figure 2 must always have something to draw."""
+    out = [b for b in (bands or []) if b in T1_KEYS]
+    if name not in T1_KEYS:
+        return out or list(DEFAULTS["band"])
+    if name not in out:
+        return out + [name]
+    return out if len(out) == 1 else [b for b in out if b != name]
+
 
 # ============================================================================
 # AVERAGES TABLE — clickable rows drive Figure 2
@@ -370,6 +386,7 @@ app.layout = html.Div(id="root", children=[
     dcc.Store(id="all-tokens", data=list(ALL_TOKENS)),   # for the clientside URL writer
     html.H1(["OCT – T", html.Sub("1"), " Correlation Figures"]),
     dcc.Store(id="sel", data={"mac": DEF_MAC, "disc": DEF_DISC}),
+    dcc.Store(id="bands", data=list(DEFAULTS["band"])),
     html.Div(id="app", children=[
       # ---- one fixed-size stage holding the figures AND the sidebar, scaled
       # to fit by fitStage() below ----
@@ -404,8 +421,10 @@ app.layout = html.Div(id="root", children=[
                            options=[{"label": " R²", "value": "R2m"}, {"label": " R", "value": "Rm"}]),
             html.Hr(),
             html.Div("T₁ sector", className="lbl"),
-            dcc.Dropdown(id="t1band", clearable=False, value=DEFAULTS["band"],
-                         options=[{"label": lbl, "value": k} for k, lbl, _ in T1_BANDS]),
+            html.Div(id="bandgrid", children=[
+                html.Button(lbl, id={"type": "bandbox", "band": k}, n_clicks=0,
+                            className="bandbox")
+                for k, lbl, _ in T1_BANDS]),
             html.Hr(),
             html.Div("Regression model", className="lbl"),
             dcc.RadioItems(id="mode", value=DEFAULTS["mode"],
@@ -439,23 +458,54 @@ def _included(exclude):
 # ---- URL (on load), All/None and Reset set the controls ----
 @app.callback(
     Output("subjects", "value"), Output("stat", "value"),
-    Output("t1band", "value"), Output("mode", "value"), Output("sel", "data"),
+    Output("mode", "value"), Output("sel", "data"),
     Input("url", "search"), Input("sel-all", "n_clicks"), Input("sel-none", "n_clicks"),
     Input("reset", "n_clicks"),
-    State("stat", "value"), State("t1band", "value"), State("mode", "value"),
+    State("stat", "value"), State("mode", "value"),
     State("sel", "data"), prevent_initial_call=False)
-def _from_url(search, _a, _n, _r, stat, band, mode, sel):
+def _from_url(search, _a, _n, _r, stat, mode, sel):
     trig = ctx.triggered_id
     if trig == "sel-all":
-        return list(ALL_TOKENS), stat, band, mode, sel
+        return list(ALL_TOKENS), stat, mode, sel
     if trig == "sel-none":
-        return [], stat, band, mode, sel
+        return [], stat, mode, sel
     if trig == "reset":
-        return (list(ALL_TOKENS), DEFAULTS["stat"], DEFAULTS["band"],
-                DEFAULTS["mode"], {"mac": DEF_MAC, "disc": DEF_DISC})
+        return (list(ALL_TOKENS), DEFAULTS["stat"], DEFAULTS["mode"],
+                {"mac": DEF_MAC, "disc": DEF_DISC})
     p = parse_params(_qs_to_dict(search))
-    return (_included(p["exclude"]), p["stat"], p["band"], p["mode"],
+    return (_included(p["exclude"]), p["stat"], p["mode"],
             {"mac": p["mac"], "disc": p["disc"]})
+
+
+# ---- the T1 band set: URL on load, Reset, a sidebar button, or a click on a
+# Fig 2 band label. One callback owns the store so these can never race. ----
+@app.callback(Output("bands", "data"),
+              Input("url", "search"), Input("reset", "n_clicks"),
+              Input({"type": "bandbox", "band": ALL}, "n_clicks"),
+              Input("fig2", "clickAnnotationData"),
+              State("bands", "data"), prevent_initial_call=False)
+def _bands(search, _r, _clicks, click, bands):
+    trig = ctx.triggered_id
+    if trig == "reset":
+        return list(DEFAULTS["band"])
+    if isinstance(trig, dict) and trig.get("type") == "bandbox":
+        # only a real click counts; ignore the n_clicks=0 firing on mount
+        if not (ctx.triggered and ctx.triggered[0]["value"]):
+            return no_update
+        return toggle_band(bands, trig["band"])
+    if trig == "fig2":
+        name = ((click or {}).get("annotation") or {}).get("name")
+        return toggle_band(bands, name) if name else no_update
+    return list(parse_params(_qs_to_dict(search))["band"])
+
+
+# ---- paint the grid: checked, and the primary marked ----
+@app.callback(Output({"type": "bandbox", "band": ALL}, "className"),
+              Input("bands", "data"))
+def _paint_bands(bands):
+    bands = list(bands or DEFAULTS["band"])
+    return ["bandbox on prim" if k == bands[0] else
+            "bandbox on" if k in bands else "bandbox" for k in T1_KEYS]
 
 
 # ---- the panel shows only the level the active model can express: one box per
@@ -540,9 +590,10 @@ def _select_sector(click, _rows, sel):
     Output("fig1", "figure"), Output("fig2", "figure"), Output("fig3", "figure"),
     Output("avgbox", "children"), Output("ncount", "children"),
     Input("subjects", "value"), Input("stat", "value"),
-    Input("t1band", "value"), Input("mode", "value"), Input("sel", "data"))
-def _render(included, stat, sel_band, mode, sel):
-    view = resolve_view(exclude=_excluded(included), stat=stat, band=sel_band,
+    Input("bands", "data"), Input("mode", "value"), Input("sel", "data"))
+def _render(included, stat, bands, mode, sel):
+    view = resolve_view(exclude=_excluded(included), stat=stat,
+                        band=tuple(bands or DEFAULTS["band"]),
                         mac=sel["mac"], disc=sel["disc"], mode=mode)
     count = (f"{view['n']}/{len(SUBJECTS)} subjects · "
              f"{view['n_eyes']}/{len(ALL_EYES)} eyes")
@@ -556,11 +607,12 @@ def _render(included, stat, sel_band, mode, sel):
 # with _from_url). Output is a throwaway store.
 app.clientside_callback(
     """
-    function(included, stat, band, mode, sel, allTokens) {
+    function(included, stat, bands, mode, sel, allTokens) {
         // must match _excluded() in the Python: every unchecked token, sorted.
         var inc = included || [];
         var excl = (allTokens || []).filter(function (t) { return inc.indexOf(t) === -1; }).sort();
-        var params = {exclude: excl.join(","), stat: stat, band: band,
+        var params = {exclude: excl.join(","), stat: stat,
+                      band: (bands || []).join(","),
                       mac: (sel || {}).mac, disc: (sel || {}).disc, mode: mode};
         var search = "?" + __ORDER__.map(function (k) {
             return k + "=" + encodeURIComponent(params[k] == null ? "" : params[k]);
@@ -580,7 +632,7 @@ app.clientside_callback(
     """.replace("__ORDER__", JS_ORDER),
     Output("postbridge-dummy", "data"),
     Input("subjects", "value"), Input("stat", "value"),
-    Input("t1band", "value"), Input("mode", "value"), Input("sel", "data"),
+    Input("bands", "data"), Input("mode", "value"), Input("sel", "data"),
     State("all-tokens", "data"),
     prevent_initial_call=True,
 )
@@ -612,8 +664,17 @@ app.index_string = ("""<!DOCTYPE html>
   .btnrow button:hover { background:#e6e6ea; }
   /* all sidebar OPTIONS share one font size (incl. the dropdown value + menu) */
   .subjlist label,
-  #stat label, #mode label,
-  #t1band, #t1band * { font-size:12px; }
+  #stat label, #mode label { font-size:12px; }
+  #bandgrid { display:grid; grid-template-columns:1fr 1fr; gap:4px; }
+  #bandgrid .bandbox { font-size:12px; text-align:left; padding:3px 6px;
+    border:1px solid #bbb; border-radius:4px; background:#fff; color:#333;
+    cursor:pointer; }
+  #bandgrid .bandbox::before { content:"\\2610\\00a0"; }
+  #bandgrid .bandbox:hover { background:#e6e6ea; }
+  #bandgrid .bandbox.on { background:#d8e6f5; border-color:#8fb4d9; color:#111; }
+  #bandgrid .bandbox.on::before { content:"\\2611\\00a0"; }
+  /* the primary is the one Figure 3 and the averages table follow */
+  #bandgrid .bandbox.prim { font-weight:bold; border-color:#1a5fb4; }
   /* one row per subject: the checklist's options are interleaved
      subject / OD / OS, so a 3-column grid lines them up. */
   .subjlist { display:grid; grid-template-columns:1fr 38px 38px; grid-auto-rows:16px;
