@@ -336,6 +336,11 @@ F2_LABEL_DX, F2_LABEL_DY = 10, 8       # nudge the label clear of its own line
 
 
 def _padded_range(vals, pad=0.05):
+    if not len(vals):
+        # No band has a fit (e.g. every subject excluded): draw an arbitrary
+        # but stable [0, 1] axis instead of raising on min([]) — an empty
+        # panel still needs axes, titles and whatever labels exist to render.
+        return [0.0, 1.0]
     lo, hi = float(min(vals)), float(max(vals))
     if hi == lo:
         hi = lo + 1.0
@@ -496,10 +501,12 @@ def build_fig2(view):
             fig.add_scatter(x=xs, y=ys, mode="lines", legend=leg,
                 legendgroup=grp, visible=vis, row=1, col=col, line=dict(color=c, width=2),
                 hoverinfo="skip", name=name)
-            # Every band is labelled, checked or not, so an unchecked one can be
-            # clicked on. Ranges cover every band's line so a pale label always
-            # has its own line on-panel, and so the axes hold still on a toggle.
-            specs.append((band, name, c, (xs[0], ys[0]), (xs[1], ys[1])))
+            # Only checked bands get a label — the labels ARE the legend, so an
+            # unchecked band's entry is simply not drawn. Ranges still cover
+            # every band's line (checked or not) so the axes hold still on a
+            # toggle: test_axis_ranges_are_explicit_and_stable_across_toggles.
+            if band in shown:
+                specs.append((band, name, c, (xs[0], ys[0]), (xs[1], ys[1])))
             xs_all += [xs[0], xs[1]] + list(x) + list(r["gx"])
             ys_all += [ys[0], ys[1]] + list(y) + list(r["gy"])
             if vis is True:
@@ -520,17 +527,15 @@ def build_fig2(view):
             ys_all += [ry[0], ry[1]]
         xr, yr = _padded_range(xs_all), _padded_range(ys_all)
         # most important first: the checked bands in selection order (primary
-        # first), then the reference line, then the unchecked ones
+        # first), then the reference line — unchecked bands never reach specs
         pos = {b: i for i, b in enumerate(shown)}
-        rank = lambda s: ((pos[s[0]], 0) if s[0] in pos
-                          else (90, 1) if s[0] is None
-                          else (91, T1_COLS.index(s[0])))
+        rank = lambda s: (pos[s[0]], 0) if s[0] in pos else (90, 1)
         specs.sort(key=rank)
         for (band, text, colour, p0, p1), (ax, ay) in zip(
                 specs, _place_labels([(s[1], s[3], s[4]) for s in specs], points, xr, yr)):
             fig.add_annotation(x=ax, y=ay, row=1, col=col, text=text,
                 name=band, captureevents=band is not None,
-                opacity=1.0 if band is None or band in pos else 0.45,
+                opacity=1.0,
                 **{**F2_LABEL, "font": dict(size=10, color=colour)})
         fig.update_xaxes(title=dict(text=xlab, standoff=5), row=1, col=col,
                          range=xr, **AX)

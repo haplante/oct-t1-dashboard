@@ -510,8 +510,13 @@ def _bands(search, _r, _clicks, click, bands):
               Input("bands", "data"))
 def _paint_bands(bands):
     bands = list(bands or DEFAULTS["band"])
-    return ["bandbox on prim" if k == bands[0] else
-            "bandbox on" if k in bands else "bandbox" for k in T1_KEYS]
+    # Dash resolves a pattern-matching ALL output by SORTED id order, which is
+    # NOT T1_KEYS (layout order) — building the list positionally off T1_KEYS
+    # silently swaps two buttons' painted state. Read the actual per-output id
+    # from ctx.outputs_list so the class always lands on the band it names.
+    return ["bandbox on prim" if o["id"]["band"] == bands[0] else
+            "bandbox on" if o["id"]["band"] in bands else "bandbox"
+            for o in ctx.outputs_list]
 
 
 # ---- the panel shows only the level the active model can express: one box per
