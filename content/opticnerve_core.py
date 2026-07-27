@@ -321,7 +321,89 @@ def build_fig1(view):
 # ============================================================================
 F2_LABEL = dict(showarrow=False, font=dict(size=10),
                 bgcolor="rgba(255,255,255,0.7)", borderpad=1)
-F2_LABEL_DX, F2_LABEL_DY = 10, 8      # nudge the line label clear of the line
+
+# Label placement geometry, derived from the fig2 canvas and the subplot layout
+# in build_fig2: 638 wide - 70 left margin - 10 right = 558 px of plot area, and
+# horizontal_spacing=0.12 leaves each of the two columns (1 - 0.12)/2 = 0.44 of
+# it; 285 tall - 40 top - 45 bottom = 200 px.
+F2_PANEL_PX = (0.44 * (FIG_SIZE["fig2"][0] - 80), FIG_SIZE["fig2"][1] - 85)
+# Character width is a text metric we approximate rather than measure. Erring
+# wide only buys clearance — raise it if a label ever clips a point.
+F2_CHAR_PX = 3.0
+F2_LINE_PX = 15.0      # label height at font size 10, plus borderpad
+F2_MARKER_PX = 7.0     # marker radius + outline: the clearance a point needs
+F2_LABEL_DX, F2_LABEL_DY = 10, 8       # nudge the label clear of its own line
+
+
+def _padded_range(vals, pad=0.05):
+    lo, hi = float(min(vals)), float(max(vals))
+    if hi == lo:
+        hi = lo + 1.0
+    m = (hi - lo) * pad
+    return [lo - m, hi + m]
+
+
+def f2_label_box(text, x, y, xr, yr):
+    """The (x0, y0, x1, y1) a label occupies, in axis fractions.
+
+    x, y is the annotation anchor in data coords, drawn xanchor=left,
+    yanchor=bottom — so the box grows right and up from it.
+    """
+    pw, ph = F2_PANEL_PX
+    u = (x - xr[0]) / (xr[1] - xr[0])
+    v = (y - yr[0]) / (yr[1] - yr[0])
+    return (u, v, u + (len(text) * F2_CHAR_PX + 2) / pw, v + F2_LINE_PX / ph)
+
+
+def _place_labels(labels, points, xr, yr):
+    """Position each Fig 2 line label so it clears the data and its neighbours.
+
+    labels : [(text, (x0, y0), (x1, y1))] in data coords, most important first
+    points : [(x, y)] every visible marker in the panel
+    xr, yr : the panel's axis ranges
+
+    Each label walks along its own regression line and takes the first slot
+    clear of every point, every already-placed label, and the panel edges. If
+    nothing is clear it takes the least-crowded slot, so a label is never
+    dropped. Returns one (x, y) anchor per label, in the input order.
+    """
+    pw, ph = F2_PANEL_PX
+    xspan, yspan = xr[1] - xr[0], yr[1] - yr[0]
+    mx, my = F2_MARKER_PX / pw, F2_MARKER_PX / ph
+    dx, dy = F2_LABEL_DX / pw, F2_LABEL_DY / ph
+    pts = [((px - xr[0]) / xspan, (py - yr[0]) / yspan) for px, py in points]
+
+    placed, out = [], []
+    for text, (x0, y0), (x1, y1) in labels:
+        w = (len(text) * F2_CHAR_PX + 2) / pw
+        h = F2_LINE_PX / ph
+        best, best_cost = None, None
+        for t in np.linspace(0.02, 0.85, 30):
+            cu = (x0 + t * (x1 - x0) - xr[0]) / xspan
+            cv = (y0 + t * (y1 - y0) - yr[0]) / yspan
+            for above in (True, False):
+                bx = cu + dx
+                by = cv + dy if above else cv - dy - h
+                box = (bx, by, bx + w, by + h)
+                if box[0] < 0 or box[2] > 1 or box[1] < 0 or box[3] > 1:
+                    continue
+                cost = sum(1 for pu, pv in pts
+                           if box[0] - mx <= pu <= box[2] + mx
+                           and box[1] - my <= pv <= box[3] + my)
+                cost += 10 * sum(1 for q in placed if not (
+                    box[2] + 0.005 <= q[0] or q[2] + 0.005 <= box[0]
+                    or box[3] + 0.005 <= q[1] or q[3] + 0.005 <= box[1]))
+                if best_cost is None or cost < best_cost:
+                    best, best_cost = box, cost
+                if cost == 0:
+                    break
+            if best_cost == 0:
+                break
+        if best is None:                      # every candidate fell off-panel
+            best = (0.0, 0.0, w, h)
+        placed.append(best)
+        out.append((xr[0] + best[0] * xspan, yr[0] + best[1] * yspan))
+    return out
 
 
 def _cdata(subj, eye, ghost):
