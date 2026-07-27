@@ -530,7 +530,7 @@ def build_fig2(view):
                 specs, _place_labels([(s[1], s[3], s[4]) for s in specs], points, xr, yr)):
             fig.add_annotation(x=ax, y=ay, row=1, col=col, text=text,
                 name=band, captureevents=band is not None,
-                opacity=1.0 if band in pos else 0.45,
+                opacity=1.0 if band is None or band in pos else 0.45,
                 **{**F2_LABEL, "font": dict(size=10, color=colour)})
         fig.update_xaxes(title=dict(text=xlab, standoff=5), row=1, col=col,
                          range=xr, **AX)
