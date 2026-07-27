@@ -71,14 +71,17 @@ function toggleExclude(exclude, subj, tok, ghost) {
 _BAND_JS = ("""
 function toggleBand(band, name) {
   var ALL = __BANDS__;
+  var DEFAULT = __DEFAULT__;
   var out = (band || "").split(",").filter(function (b) { return ALL.indexOf(b) !== -1; });
-  if (ALL.indexOf(name) === -1) return out.join(",");
+  // Junk name: keep whatever survived filtering, but never hand back nothing.
+  if (ALL.indexOf(name) === -1) return (out.length ? out : [DEFAULT]).join(",");
   var i = out.indexOf(name);
   if (i === -1) out.push(name);
   else if (out.length > 1) out.splice(i, 1);
   return out.join(",");
 }
-""".replace("__BANDS__", json.dumps([k for k, _, _ in T1_BANDS])))
+""".replace("__BANDS__", json.dumps([k for k, _, _ in T1_BANDS]))
+   .replace("__DEFAULT__", json.dumps(DEFAULTS["band"][0])))
 
 T1_KEYS = [k for k, _, _ in T1_BANDS]
 
