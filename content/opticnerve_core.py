@@ -329,7 +329,7 @@ F2_LABEL = dict(showarrow=False, font=dict(size=10),
 F2_PANEL_PX = (0.44 * (FIG_SIZE["fig2"][0] - 80), FIG_SIZE["fig2"][1] - 85)
 # Character width is a text metric we approximate rather than measure. Erring
 # wide only buys clearance — raise it if a label ever clips a point.
-F2_CHAR_PX = 3.0
+F2_CHAR_PX = 6.0
 F2_LINE_PX = 15.0      # label height at font size 10, plus borderpad
 F2_MARKER_PX = 7.0     # marker radius + outline: the clearance a point needs
 F2_LABEL_DX, F2_LABEL_DY = 10, 8       # nudge the label clear of its own line
@@ -378,24 +378,36 @@ def _place_labels(labels, points, xr, yr):
         w = (len(text) * F2_CHAR_PX + 2) / pw
         h = F2_LINE_PX / ph
         best, best_cost = None, None
-        for t in np.linspace(0.02, 0.85, 30):
-            cu = (x0 + t * (x1 - x0) - xr[0]) / xspan
-            cv = (y0 + t * (y1 - y0) - yr[0]) / yspan
-            for above in (True, False):
-                bx = cu + dx
-                by = cv + dy if above else cv - dy - h
-                box = (bx, by, bx + w, by + h)
-                if box[0] < 0 or box[2] > 1 or box[1] < 0 or box[3] > 1:
-                    continue
-                cost = sum(1 for pu, pv in pts
-                           if box[0] - mx <= pu <= box[2] + mx
-                           and box[1] - my <= pv <= box[3] + my)
-                cost += 10 * sum(1 for q in placed if not (
-                    box[2] + 0.005 <= q[0] or q[2] + 0.005 <= box[0]
-                    or box[3] + 0.005 <= q[1] or q[3] + 0.005 <= box[1]))
-                if best_cost is None or cost < best_cost:
-                    best, best_cost = box, cost
-                if cost == 0:
+        # Candidates: walk the line at t in [0.02, 0.95], try the box growing
+        # right or left of the anchor, above or below it, and — if the label's
+        # own line is too crowded to find a clear slot nearby — step further
+        # off the line in multiples of F2_LABEL_DY. Cheapest options first so
+        # the early-exit on cost == 0 still fires fast in the common case.
+        for step in (1, 2, 3):
+            for t in np.linspace(0.02, 0.95, 36):
+                cu = (x0 + t * (x1 - x0) - xr[0]) / xspan
+                cv = (y0 + t * (y1 - y0) - yr[0]) / yspan
+                for above in (True, False):
+                    voff = step * dy
+                    by = cv + voff if above else cv - voff - h
+                    for leftward in (False, True):
+                        bx = cu - w - dx if leftward else cu + dx
+                        box = (bx, by, bx + w, by + h)
+                        if box[0] < 0 or box[2] > 1 or box[1] < 0 or box[3] > 1:
+                            continue
+                        cost = sum(1 for pu, pv in pts
+                                   if box[0] - mx <= pu <= box[2] + mx
+                                   and box[1] - my <= pv <= box[3] + my)
+                        cost += 10 * sum(1 for q in placed if not (
+                            box[2] + 0.005 <= q[0] or q[2] + 0.005 <= box[0]
+                            or box[3] + 0.005 <= q[1] or q[3] + 0.005 <= box[1]))
+                        if best_cost is None or cost < best_cost:
+                            best, best_cost = box, cost
+                        if cost == 0:
+                            break
+                    if best_cost == 0:
+                        break
+                if best_cost == 0:
                     break
             if best_cost == 0:
                 break
