@@ -393,14 +393,15 @@ def _place_labels(labels, points, xr, yr):
                     for leftward in (False, True):
                         bx = cu - w - dx if leftward else cu + dx
                         box = (bx, by, bx + w, by + h)
-                        if box[0] < 0 or box[2] > 1 or box[1] < 0 or box[3] > 1:
-                            continue
+                        off_panel = box[0] < 0 or box[2] > 1 or box[1] < 0 or box[3] > 1
                         cost = sum(1 for pu, pv in pts
                                    if box[0] - mx <= pu <= box[2] + mx
                                    and box[1] - my <= pv <= box[3] + my)
                         cost += 10 * sum(1 for q in placed if not (
                             box[2] + 0.005 <= q[0] or q[2] + 0.005 <= box[0]
                             or box[3] + 0.005 <= q[1] or q[3] + 0.005 <= box[1]))
+                        if off_panel:              # last resort only: never beats an on-panel slot
+                            cost += 1_000_000
                         if best_cost is None or cost < best_cost:
                             best, best_cost = box, cost
                         if cost == 0:
@@ -411,8 +412,16 @@ def _place_labels(labels, points, xr, yr):
                     break
             if best_cost == 0:
                 break
-        if best is None:                      # every candidate fell off-panel
+        if best is None:                      # no candidate was ever tried (unreachable in practice)
             best = (0.0, 0.0, w, h)
+        elif best[0] < 0 or best[2] > 1 or best[1] < 0 or best[3] > 1:
+            # every candidate fell off-panel: keep the closest-to-its-line one and
+            # clamp it into the panel with a pure translation (box < panel, so it
+            # always fits) instead of cornering it away from its own line.
+            bx0, by0, bx1, by1 = best
+            sx = -bx0 if bx0 < 0 else (1 - bx1 if bx1 > 1 else 0.0)
+            sy = -by0 if by0 < 0 else (1 - by1 if by1 > 1 else 0.0)
+            best = (bx0 + sx, by0 + sy, bx1 + sx, by1 + sy)
         placed.append(best)
         out.append((xr[0] + best[0] * xspan, yr[0] + best[1] * yspan))
     return out
