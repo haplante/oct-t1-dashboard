@@ -64,6 +64,22 @@ function toggleExclude(exclude, subj, tok, ghost) {
 }
 """.replace("__SEP__", json.dumps(EYE_SEP)))
 
+# Browser twin of toggle_band() in Dash_client below: check or uncheck one T1
+# band. Order is selection order — a newly checked band goes last, so checking
+# never steals the primary — and the set is never emptied. Self-contained (no
+# browser APIs) so the tests can run it under node.
+_BAND_JS = ("""
+function toggleBand(band, name) {
+  var ALL = __BANDS__;
+  var out = (band || "").split(",").filter(function (b) { return ALL.indexOf(b) !== -1; });
+  if (ALL.indexOf(name) === -1) return out.join(",");
+  var i = out.indexOf(name);
+  if (i === -1) out.push(name);
+  else if (out.length > 1) out.splice(i, 1);
+  return out.join(",");
+}
+""".replace("__BANDS__", json.dumps([k for k, _, _ in T1_BANDS])))
+
 
 # ============================================================================
 # AVERAGES TABLE — clickable rows drive Figure 2
@@ -147,6 +163,7 @@ _FIG_CLIENT = r"""
 (function () {
   "use strict";
 __TOGGLE__
+__BANDTOGGLE__
   var FIGID = "__FIGID__";
   var NATIVE_W = __FIGW__, NATIVE_H = __FIGH__, PNG_SCALE = __PNGSCALE__;
   var ORDER = __ORDER__, DEF = __DEFAULTS__;
@@ -214,6 +231,16 @@ __TOGGLE__
       else return;
       broadcast(p);
     });
+    if (FIGID === "fig2") {
+      gd.on("plotly_clickannotation", function (ev) {
+        if (applying) return;
+        var b = ev.annotation && ev.annotation.name;
+        if (!b) return;
+        var p = readParams();
+        p.band = toggleBand(p.band, b);
+        broadcast(p);
+      });
+    }
   }
   function broadcast(p) {
     try { window.history.replaceState(null, "", window.location.pathname + "?" + serialize(p)); } catch (e) {}
@@ -313,7 +340,8 @@ def figure_page(figid):
     w, h = FIG_SIZE[figid]
     subs = {"__FIGID__": figid, "__FIGW__": str(w), "__FIGH__": str(h),
             "__PNGSCALE__": str(PNG_SCALE), "__ORDER__": JS_ORDER,
-            "__DEFAULTS__": JS_DEFAULTS, "__TOGGLE__": _TOGGLE_JS}
+            "__DEFAULTS__": JS_DEFAULTS, "__TOGGLE__": _TOGGLE_JS,
+            "__BANDTOGGLE__": _BAND_JS}
     client = _FIG_CLIENT
     page = _FIG_PAGE
     for k, v in subs.items():
