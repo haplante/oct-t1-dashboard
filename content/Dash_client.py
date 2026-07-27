@@ -35,7 +35,8 @@ from opticnerve_core import (
 # The browser needs the same state model as the Python. Injected into every
 # script below rather than hand-copied, so the two can never drift.
 JS_ORDER = json.dumps(list(PARAM_ORDER))
-JS_DEFAULTS = json.dumps({**DEFAULTS, "exclude": ""})
+JS_DEFAULTS = json.dumps({k: (",".join(v) if isinstance(v, tuple) else v)
+                          for k, v in DEFAULTS.items()})
 
 # Browser twin of _toggle_point() below: the dashboard toggles a clicked Fig 2
 # point through a Dash callback, but the standalone /figure/fig2 page has no
@@ -124,7 +125,8 @@ def opticnerve(figid):
         abort(404)
     p = parse_params(request.args)
     view = resolve_view(**p)
-    payload = {"figid": figid, "params": {**p, "exclude": list(p["exclude"])},
+    payload = {"figid": figid,
+               "params": {**p, "exclude": list(p["exclude"]), "band": list(p["band"])},
                "n": view["n"]}
     if figid == "all":
         payload.update({k: _BUILDERS[k](view).to_dict() for k in _BUILDERS})

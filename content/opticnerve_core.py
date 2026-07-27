@@ -107,11 +107,24 @@ def split_excluded(excluded):
 # ============================================================================
 # STATE MODEL — the 6 params that fully determine every figure
 # ============================================================================
-DEFAULTS = {"exclude": (), "stat": "R2m", "band": "T1_mean_015",
+# `band` is an ORDERED, non-empty tuple: Figure 2 overlays every band in it, and
+# band[0] — the primary — is the one Figure 3, the reference line and the
+# averages table follow. Order is selection order, so it is NOT sorted (unlike
+# `exclude`, where order carries no meaning).
+DEFAULTS = {"exclude": (), "stat": "R2m", "band": ("T1_mean_015",),
             "mac": "All_1_3_gcc", "disc": "All_um_", "mode": "avg"}
 PARAM_ORDER = ("exclude", "stat", "band", "mac", "disc", "mode")
-_ALLOWED = {"stat": ("R2m", "Rm"), "band": tuple(T1_COLS), "mode": ("avg", "lme"),
+_ALLOWED = {"stat": ("R2m", "Rm"), "mode": ("avg", "lme"),
             "mac": MAC_METRICS, "disc": DISC_METRICS}
+
+
+def _ordered(raw, valid):
+    """Comma list -> tuple of the known entries, first-seen order, no repeats."""
+    out = []
+    for t in (s.strip() for s in (raw or "").split(",")):
+        if t in valid and t not in out:
+            out.append(t)
+    return tuple(out)
 
 
 def parse_params(mapping):
@@ -120,20 +133,23 @@ def parse_params(mapping):
     Every value is clamped to a known one, so a hand-edited URL can never reach
     fit()/groupby (which would KeyError -> HTTP 500 on the public route).
     `exclude` takes a bare "sub-0200" (whole subject) or a dotted "sub-0200.OD"
-    (that eye only); it is sorted so it makes a stable lru_cache key.
+    (that eye only); it is sorted so it makes a stable lru_cache key. `band` is a
+    comma list whose order is meaning (band[0] is the primary), so it is kept as
+    given and only falls back to the default when nothing valid survives.
     """
     g = mapping.get
     tokens = (t.strip() for t in (g("exclude", "") or "").split(","))
     params = {"exclude": tuple(sorted({t for t in tokens if t in VALID_EXCLUDE}))}
+    params["band"] = _ordered(g("band", ""), T1_COLS) or DEFAULTS["band"]
     for key, allowed in _ALLOWED.items():
         params[key] = g(key) if g(key) in allowed else DEFAULTS[key]
     return {k: params[k] for k in PARAM_ORDER}
 
 
 def serialize_params(params):
-    """Canonical query string, fixed key order, exclude joined by commas."""
-    return "&".join(f"{k}={','.join(params[k]) if k == 'exclude' else params[k]}"
-                    for k in PARAM_ORDER)
+    """Canonical query string, fixed key order, tuple params joined by commas."""
+    return "&".join(f"{k}={','.join(v) if isinstance(v, tuple) else v}"
+                    for k, v in ((k, params[k]) for k in PARAM_ORDER))
 
 
 _uri = lambda p: "data:image/jpeg;base64," + base64.b64encode(Path(p).read_bytes()).decode()
@@ -471,15 +487,21 @@ def build_fig3(view):
     return fig
 
 
-def resolve_view(exclude=(), stat="R2m", band="T1_mean_015",
+def resolve_view(exclude=(), stat="R2m", band=("T1_mean_015",),
                  mac="All_1_3_gcc", disc="All_um_", mode="avg"):
     """Single source of truth: filter data, run every fit needed to draw
     Fig 1/2/3 + the averages table for this state. Cheap thanks to fit()'s
-    lru_cache; returns plain dicts so it JSON-serializes and unit-tests easily."""
+    lru_cache; returns plain dicts so it JSON-serializes and unit-tests easily.
+
+    `band` may be one column or an ordered sequence of them. Figure 2 draws all
+    of them; everything else follows the first (the primary)."""
+    if isinstance(band, str):
+        band = (band,)
     params = parse_params({"exclude": ",".join(exclude) if exclude else "",
-                           "stat": stat, "band": band, "mac": mac,
+                           "stat": stat, "band": ",".join(band), "mac": mac,
                            "disc": disc, "mode": mode})
-    excluded, band, mode = params["exclude"], params["band"], params["mode"]
+    excluded, bands, mode = params["exclude"], params["band"], params["mode"]
+    band = bands[0]                      # the primary: Fig 3, ref line, table
     gone, out_eyes = split_excluded(excluded)
     included = [s for s in SUBJECTS if s not in gone]
 
@@ -511,7 +533,7 @@ def resolve_view(exclude=(), stat="R2m", band="T1_mean_015",
         "params": params, "excluded": excluded,
         "subjects": included, "n": len(included),
         "n_eyes": sum(t not in out_eyes for t in ALL_EYES),
-        "stat": params["stat"], "band": band, "mode": mode,
+        "stat": params["stat"], "band": band, "bands": bands, "mode": mode,
         "mac": params["mac"], "disc": params["disc"],
         # Fig 3 colours its wedges from the selected band's family fits
         "mac_fits": avg_fits[band]["mac"], "mac_pf": avg_pf[band]["mac"],
