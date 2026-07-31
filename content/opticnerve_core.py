@@ -156,7 +156,7 @@ _uri = lambda p: "data:image/jpeg;base64," + base64.b64encode(Path(p).read_bytes
 MAC_URI, DISC_URI = _uri(DATA / "macula_OD.jpg"), _uri(DATA / "disc_OD.jpg")
 
 AX = dict(color="black", linecolor="black", showline=True, mirror=False, showgrid=False,
-          zeroline=False, ticks="outside", tickcolor="black", fixedrange=True)
+          zeroline=False, ticks="outside", tickcolor="black", fixedrange=True, nticks=6)
 
 # Every figure draws on a FIXED pixel canvas — never autosize/responsive. Every
 # consumer (dashboard, /figure/<id> pages, paper.md) scales the drawn result with
@@ -459,6 +459,21 @@ def build_fig2(view):
         fits = [panel["fits"][b] for b in T1_COLS]
         pf = [panel["pf"][b] for b in T1_COLS]
         specs, points, xs_all, ys_all = [], [], [], []
+        # grey dotted reference drawn first (under all bands' dots): default
+        # sector at the selected band (only when a non-default sector is
+        # selected) — lets you compare against the baseline.
+        ref = panel.get("ref")
+        if ref:
+            rx = np.array([min(ref["x"]), max(ref["x"])])
+            ry = ref["b0"] + ref["b1"] * rx
+            rname = (f"{BAND_LABEL[sel_band].replace(' mm','')} "
+                     f"{sector_name(panel['default_sector']).split(' (')[0]}")
+            fig.add_scatter(x=rx, y=ry, mode="lines", legend=leg,
+                row=1, col=col, line=dict(color="#999", width=1.5, dash="dot"),
+                hoverinfo="skip", name=rname)
+            specs.append((None, rname, "#999", (rx[0], ry[0]), (rx[1], ry[1])))
+            xs_all += [rx[0], rx[1]]
+            ys_all += [ry[0], ry[1]]
         for (band, lbl, c), r, q in zip(T1_BANDS, fits, pf):
             if not r:
                 continue
@@ -470,6 +485,16 @@ def build_fig2(view):
                 f"<b>%{{customdata[0]}}</b>{side} · {lbl}<br>"
                 f"{sector_name(sector)} = %{{x:.2f}}"
                 f"<br>T₁ = %{{y:.0f}} ms<br><i>({tail})</i><extra></extra>")
+            # fit line drawn before its markers so the dots sit on top of it
+            xs = np.array([x.min(), x.max()])
+            ys = r["b0"] + r["b1"] * xs
+            star = " *" if (not np.isnan(q) and q < 0.05) else ""
+            name = f"{lbl.replace(' mm','')} ({stat_lbl(stat)}={fmt2(stat_val(r, stat))}){star}"
+            fig.add_scatter(x=xs, y=ys, mode="lines", legend=leg,
+                legendgroup=grp, visible=vis, row=1, col=col, line=dict(color=c, width=2),
+                hoverinfo="skip", name=name)
+            if band in shown:
+                specs.append((band, name, c, (xs[0], ys[0]), (xs[1], ys[1])))
             if r["eye"] is None:                       # average mode: one marker per subject
                 fig.add_scatter(x=x, y=y, mode="markers", legend=leg, legendgroup=grp,
                     showlegend=False, visible=vis, row=1, col=col, customdata=cd,
@@ -494,37 +519,14 @@ def build_fig2(view):
                     marker=dict(color="rgba(0,0,0,0)", size=10, line=dict(color="#888", width=1.5)),
                     hovertemplate=hov(" · excluded", "click → put back"),
                     hoverlabel=dict(bgcolor="#222", font=dict(color="#fff")))
-            xs = np.array([x.min(), x.max()])
-            ys = r["b0"] + r["b1"] * xs
-            star = " *" if (not np.isnan(q) and q < 0.05) else ""
-            name = f"{lbl.replace(' mm','')} ({stat_lbl(stat)}={fmt2(stat_val(r, stat))}){star}"
-            fig.add_scatter(x=xs, y=ys, mode="lines", legend=leg,
-                legendgroup=grp, visible=vis, row=1, col=col, line=dict(color=c, width=2),
-                hoverinfo="skip", name=name)
             # Only checked bands get a label — the labels ARE the legend, so an
             # unchecked band's entry is simply not drawn. Ranges still cover
             # every band's line (checked or not) so the axes hold still on a
             # toggle: test_axis_ranges_are_explicit_and_stable_across_toggles.
-            if band in shown:
-                specs.append((band, name, c, (xs[0], ys[0]), (xs[1], ys[1])))
             xs_all += [xs[0], xs[1]] + list(x) + list(r["gx"])
             ys_all += [ys[0], ys[1]] + list(y) + list(r["gy"])
             if vis is True:
                 points += list(zip(x, y)) + list(zip(r["gx"], r["gy"]))
-        # grey dotted reference: default sector at the selected band (only when a
-        # non-default sector is selected) — lets you compare against the baseline.
-        ref = panel.get("ref")
-        if ref:
-            rx = np.array([min(ref["x"]), max(ref["x"])])
-            ry = ref["b0"] + ref["b1"] * rx
-            rname = (f"{BAND_LABEL[sel_band].replace(' mm','')} "
-                     f"{sector_name(panel['default_sector']).split(' (')[0]}")
-            fig.add_scatter(x=rx, y=ry, mode="lines", legend=leg,
-                row=1, col=col, line=dict(color="#999", width=1.5, dash="dot"),
-                hoverinfo="skip", name=rname)
-            specs.append((None, rname, "#999", (rx[0], ry[0]), (rx[1], ry[1])))
-            xs_all += [rx[0], rx[1]]
-            ys_all += [ry[0], ry[1]]
         xr, yr = _padded_range(xs_all), _padded_range(ys_all)
         # most important first: the checked bands in selection order (primary
         # first), then the reference line — unchecked bands never reach specs
