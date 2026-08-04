@@ -22,7 +22,7 @@ from urllib.parse import parse_qsl
 
 import numpy as np
 from dash import Dash, dcc, html, Input, Output, State, ctx, ALL, no_update
-from flask import request, abort
+from flask import request, abort, jsonify
 from flask_cors import CORS
 from plotly.utils import PlotlyJSONEncoder
 
@@ -176,19 +176,23 @@ def opticnerve(figid):
 
 @server.route("/api/generate_plots", methods=["POST"])
 def api_generate_plots():
+    """Stateless figure generation: full params in, figure JSON out."""
     body = request.get_json(silent=True) or {}
     figid = body.get("figid", "fig1")
     if figid not in _BUILDERS and figid != "all":
         abort(404)
-    p = parse_params(body)
-    view = resolve_view(**p)
-    payload = {"figid": figid,
-               "params": {**p, "exclude": list(p["exclude"]), "band": list(p["band"])},
-               "n": view["n"]}
-    if figid == "all":
-        payload.update({k: _BUILDERS[k](view).to_dict() for k in _BUILDERS})
-    else:
-        payload["figure"] = _BUILDERS[figid](view).to_dict()
+    try:
+        p = parse_params(body)
+        view = resolve_view(**p)
+        payload = {"figid": figid,
+                   "params": {**p, "exclude": list(p["exclude"]), "band": list(p["band"])},
+                   "n": view["n"]}
+        if figid == "all":
+            payload.update({k: _BUILDERS[k](view).to_dict() for k in _BUILDERS})
+        else:
+            payload["figure"] = _BUILDERS[figid](view).to_dict()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
     return server.response_class(
         json.dumps(payload, cls=PlotlyJSONEncoder), mimetype="application/json")
 

@@ -1,6 +1,7 @@
 import json
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -46,3 +47,12 @@ def test_generate_plots_rejects_unknown_figid():
     client = server.test_client()
     resp = _post(client, {"figid": "nope"})
     assert resp.status_code == 404
+
+
+def test_generate_plots_returns_500_json_on_unexpected_error():
+    client = server.test_client()
+    with patch("app.resolve_view", side_effect=RuntimeError("boom")):
+        resp = _post(client, {"figid": "fig1"})
+    assert resp.status_code == 500
+    body = resp.get_json()
+    assert body["error"] == "boom"
