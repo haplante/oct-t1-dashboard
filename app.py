@@ -174,6 +174,25 @@ def opticnerve(figid):
         json.dumps(payload, cls=PlotlyJSONEncoder), mimetype="application/json")
 
 
+@server.route("/api/generate_plots", methods=["POST"])
+def api_generate_plots():
+    body = request.get_json(silent=True) or {}
+    figid = body.get("figid", "fig1")
+    if figid not in _BUILDERS and figid != "all":
+        abort(404)
+    p = parse_params(body)
+    view = resolve_view(**p)
+    payload = {"figid": figid,
+               "params": {**p, "exclude": list(p["exclude"]), "band": list(p["band"])},
+               "n": view["n"]}
+    if figid == "all":
+        payload.update({k: _BUILDERS[k](view).to_dict() for k in _BUILDERS})
+    else:
+        payload["figure"] = _BUILDERS[figid](view).to_dict()
+    return server.response_class(
+        json.dumps(payload, cls=PlotlyJSONEncoder), mimetype="application/json")
+
+
 # ---------------------------------------------------------------------------
 # Standalone live figure pages, for embedding in the article as <iframe>s.
 # MyST won't run author <script>, so the article page itself cannot host the

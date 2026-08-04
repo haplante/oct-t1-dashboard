@@ -34,5 +34,4 @@ data/
 # Local-only: not part of the deployed site or the paper.
 README.md
 docs/
-tests/
 dashboard_standard_reg/
