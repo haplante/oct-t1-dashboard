@@ -55,4 +55,12 @@ def test_generate_plots_returns_500_json_on_unexpected_error():
         resp = _post(client, {"figid": "fig1"})
     assert resp.status_code == 500
     body = resp.get_json()
-    assert body["error"] == "boom"
+    assert body["error"] == "internal error generating plots"
+
+
+def test_generate_plots_accepts_list_valued_params():
+    client = server.test_client()
+    resp_list = _post(client, {"figid": "fig2", "band": ["T1_mean_015", "T1_mean_05"]})
+    resp_str = _post(client, {"figid": "fig2", "band": "T1_mean_015,T1_mean_05"})
+    assert resp_list.status_code == 200
+    assert resp_list.get_json()["params"]["band"] == resp_str.get_json()["params"]["band"]

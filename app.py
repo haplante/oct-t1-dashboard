@@ -13,11 +13,12 @@ Also serves, for embedding in paper.md:
   /opticnerve/<figid>   the figure as a Plotly JSON spec  (figid: fig1|fig2|fig3|all)
   /figure/<figid>       a standalone page rendering that figure
 
-Run locally:   python Dash_client.py       (http://127.0.0.1:8050)
-Deploy:        gunicorn Dash_client:server  (see render.yaml)
+Run locally:   python app.py                (http://127.0.0.1:8050)
+Deploy:        gunicorn app:server           (see render.yaml)
 """
 
 import json
+import logging
 from urllib.parse import parse_qsl
 
 import numpy as np
@@ -64,7 +65,7 @@ function toggleExclude(exclude, subj, tok, ghost) {
 }
 """.replace("__SEP__", json.dumps(EYE_SEP)))
 
-# Browser twin of toggle_band() in Dash_client below: check or uncheck one T1
+# Browser twin of toggle_band() below: check or uncheck one T1
 # band. Order is selection order — a newly checked band goes last, so checking
 # never steals the primary — and the set is never emptied. Self-contained (no
 # browser APIs) so the tests can run it under node.
@@ -157,12 +158,16 @@ _BUILDERS = {"fig1": build_fig1, "fig2": build_fig2, "fig3": build_fig3}
 PNG_SCALE = 600 / 96
 
 
-@server.route("/opticnerve/<figid>")
-def opticnerve(figid):
-    if figid not in _BUILDERS and figid != "all":
-        abort(404)
-    p = parse_params(request.args)
-    view = resolve_view(**p)
+def _coerce_list_params(body):
+    """JSON clients naturally send list-valued params (band: ["a", "b"]),
+    but parse_params() expects the comma-string a query string always gives.
+    Join lists back into that shape so both inputs behave the same."""
+    return {k: (",".join(v) if isinstance(v, list) else v) for k, v in body.items()}
+
+
+def _build_payload(figid, p, view):
+    """Shared by /opticnerve and /api/generate_plots: the params+figure(s)
+    JSON body, identical either way."""
     payload = {"figid": figid,
                "params": {**p, "exclude": list(p["exclude"]), "band": list(p["band"])},
                "n": view["n"]}
@@ -170,6 +175,16 @@ def opticnerve(figid):
         payload.update({k: _BUILDERS[k](view).to_dict() for k in _BUILDERS})
     else:
         payload["figure"] = _BUILDERS[figid](view).to_dict()
+    return payload
+
+
+@server.route("/opticnerve/<figid>")
+def opticnerve(figid):
+    if figid not in _BUILDERS and figid != "all":
+        abort(404)
+    p = parse_params(request.args)
+    view = resolve_view(**p)
+    payload = _build_payload(figid, p, view)
     return server.response_class(
         json.dumps(payload, cls=PlotlyJSONEncoder), mimetype="application/json")
 
@@ -182,17 +197,12 @@ def api_generate_plots():
     if figid not in _BUILDERS and figid != "all":
         abort(404)
     try:
-        p = parse_params(body)
+        p = parse_params(_coerce_list_params(body))
         view = resolve_view(**p)
-        payload = {"figid": figid,
-                   "params": {**p, "exclude": list(p["exclude"]), "band": list(p["band"])},
-                   "n": view["n"]}
-        if figid == "all":
-            payload.update({k: _BUILDERS[k](view).to_dict() for k in _BUILDERS})
-        else:
-            payload["figure"] = _BUILDERS[figid](view).to_dict()
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        payload = _build_payload(figid, p, view)
+    except Exception:
+        logging.exception("error in api_generate_plots")
+        return jsonify({"error": "internal error generating plots"}), 500
     return server.response_class(
         json.dumps(payload, cls=PlotlyJSONEncoder), mimetype="application/json")
 
