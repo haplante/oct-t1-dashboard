@@ -236,6 +236,14 @@ __BANDTOGGLE__
   }
   window.addEventListener("resize", fitStage);
   fitStage();
+  // CSS alone rounds the annotation chips on screen but toImage export
+  // serializes the SVG without the external stylesheet, so it comes out
+  // square. Setting rx/ry as real attributes makes it survive export too.
+  new MutationObserver(function () {
+    document.querySelectorAll("g.annotation rect").forEach(function (r) {
+      r.setAttribute("rx", 6); r.setAttribute("ry", 6);
+    });
+  }).observe(document.getElementById("fig"), {childList: true, subtree: true});
   function readParams() {
     var q = new URLSearchParams(window.location.search), p = {};
     ORDER.forEach(function (k) { p[k] = q.has(k) ? q.get(k) : DEF[k]; });
@@ -697,7 +705,7 @@ app.index_string = ("""<!DOCTYPE html>
   /* no height of its own: as a flex child of the stage it stretches to the
      stage's 626px, i.e. exactly fig2 + gap + fig3, and scales with it. */
   #sidebar { flex:0 0 210px; background:#f4f4f6; border-radius:6px;
-    padding:14px; overflow-y:auto; }
+    padding:14px; overflow-y:auto; box-sizing:border-box; }
   #sidebar h3 { margin:0 0 8px; font-size:16px; }
   #sidebar .hint { font-size:11px; color:#666; margin-bottom:8px; line-height:1.35; }
   #sidebar .lbl { font-size:13px; color:#555; margin-bottom:4px; }
@@ -831,6 +839,18 @@ app.index_string = ("""<!DOCTYPE html>
     if (wrap && !wrap._fitted) { wrap._fitted = true; ro.observe(wrap); fitStage(); }
   }).observe(document.body, {childList: true, subtree: true});
   window.addEventListener('resize', fitStage);
+})();
+</script>
+<script>
+(function () {
+  // Same fix as the standalone figure pages (see _FIG_PAGE): rx/ry on the
+  // annotation rects has to be a real SVG attribute, not just CSS, or it's
+  // lost when Plotly's toImage export serializes the SVG standalone.
+  new MutationObserver(function () {
+    document.querySelectorAll('g.annotation rect').forEach(function (r) {
+      r.setAttribute('rx', 6); r.setAttribute('ry', 6);
+    });
+  }).observe(document.body, {childList: true, subtree: true});
 })();
 </script>
 {%config%}{%scripts%}{%renderer%}</footer></body></html>"""
