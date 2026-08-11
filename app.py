@@ -311,6 +311,11 @@ __BANDTOGGLE__
     render(p).finally(function () {
       applying = false;
       if (bc) bc.postMessage({params: p});
+      // Also tell the embedding page (cross-origin, so BroadcastChannel can't
+      // reach it): the article's option panels mirror in-figure clicks from this.
+      if (window.parent !== window) {
+        window.parent.postMessage({opticnerve: true, figid: FIGID, params: p}, "*");
+      }
     });
   }
   function receive(p) {
@@ -321,6 +326,17 @@ __BANDTOGGLE__
     }
   }
   if (bc) bc.onmessage = function (e) { var d = e.data || {}; if (d.params) receive(d.params); };
+  // Params pushed by the embedding page (the article's option panels) — the
+  // cross-origin twin of the BroadcastChannel path above. Values are validated
+  // server-side by parse_params, so any origin is safe to accept. Missing keys
+  // fall back to DEF so a partial push still serializes cleanly.
+  window.addEventListener("message", function (e) {
+    var d = e.data || {};
+    if (!d.opticnerve || !d.params) return;
+    var p = {};
+    ORDER.forEach(function (k) { p[k] = d.params[k] != null ? d.params[k] : DEF[k]; });
+    receive(p);
+  });
   window.addEventListener("popstate", function () { receive(readParams()); });
   render(readParams());
 })();
