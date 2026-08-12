@@ -209,10 +209,12 @@ def api_generate_plots():
 
 # ---------------------------------------------------------------------------
 # Standalone live figure pages, for embedding in the article as <iframe>s.
-# MyST won't run author <script>, so the article page itself cannot host the
-# sync bus. Instead each figure is its own page served here; because every
-# figure iframe AND the dashboard iframe are same-origin (this app), they sync
-# directly via a BroadcastChannel — no parent-page JS required.
+# Each page is driven by its own URL params plus postMessage from whoever embeds
+# it, and is otherwise independent: the article's three figures and the dashboard
+# iframe are same-origin, so a shared BroadcastChannel would gang them together
+# (one click in Figure 2 re-rendering everything). The channel is therefore
+# opt-in via ?sync=1 — the article does not pass it, so each figure's option
+# panel stands alone; open /figure/fig2?sync=1 by hand to gang them deliberately.
 # ---------------------------------------------------------------------------
 _FIG_CLIENT = r"""
 (function () {
@@ -223,7 +225,11 @@ __BANDTOGGLE__
   var NATIVE_W = __FIGW__, NATIVE_H = __FIGH__, PNG_SCALE = __PNGSCALE__;
   var ORDER = __ORDER__, DEF = __DEFAULTS__;
   var API = window.location.origin;
-  var bc = ("BroadcastChannel" in window) ? new BroadcastChannel("opticnerve") : null;
+  // Read once at load: broadcast() rewrites the query from ORDER alone, so the
+  // param does not survive the first click in the address bar (it does not need
+  // to -- bc is already made or not by then).
+  var SYNC = new URLSearchParams(window.location.search).has("sync");
+  var bc = (SYNC && "BroadcastChannel" in window) ? new BroadcastChannel("opticnerve") : null;
   var applying = false, last = null;
   // MyST's theme forces every embedded <iframe> into its own responsive box and
   // discards the width/height we author, so the size can't be set from paper.md.
@@ -365,9 +371,10 @@ g.annotation rect{rx:6px;ry:6px}</style></head>
 # button in a paper.md caption cannot reach the figures directly — but an
 # <iframe> survives the sanitiser (that is how the figures get there). This
 # route serves a caption-sized button that is a pure SENDER on the shared
-# BroadcastChannel: the figure pages and the dashboard already listen and
-# reset themselves. It starts hidden and appears only once it hears a
+# BroadcastChannel: the dashboard listens and resets itself, as do figure pages
+# opened with ?sync=1. It starts hidden and appears only once it hears a
 # non-default state, which is correct because nothing broadcasts on load.
+# Unused by the article since each option panel grew its own Reset button.
 # ---------------------------------------------------------------------------
 _CHIP_PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>reset</title>
