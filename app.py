@@ -148,7 +148,7 @@ def build_avg_table(view):
 # ============================================================================
 # DASH APP  (layout + callbacks)
 # ============================================================================
-app = Dash(__name__, title="OCT – T₁ Correlation",eager_loading=True)
+app = Dash(__name__, title="OCT – T₁ FigServe",eager_loading=True)
 server = app.server                      # gunicorn entry point (Render)
 CORS(server, resources={r"/opticnerve/*": {"origins": "*"}})
 
@@ -454,7 +454,7 @@ app.layout = html.Div(id="root", children=[
     dcc.Location(id="url", refresh=False),
     dcc.Store(id="postbridge-dummy"),
     dcc.Store(id="all-tokens", data=list(ALL_TOKENS)),   # for the clientside URL writer
-    html.H1(["OCT – T", html.Sub("1"), " Correlation Figures"]),
+    html.H1(["Figure Server for OCT – T", html.Sub("1"), " Correlation"]),
     dcc.Store(id="sel", data={"mac": DEF_MAC, "disc": DEF_DISC}),
     dcc.Store(id="bands", data=list(DEFAULTS["band"])),
     html.Div(id="app", children=[
