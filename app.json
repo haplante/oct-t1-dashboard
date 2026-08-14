@@ -1,0 +1,7 @@
+{
+  "scripts": {
+    "dokku": {
+      "postdeploy": "python binder/fetch_data.py"
+    }
+  }
+}
