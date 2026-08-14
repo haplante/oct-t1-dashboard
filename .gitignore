@@ -28,8 +28,7 @@ _build/
 old/
 scripts/
 
-# Fetched at build time by binder/fetch_data.py — never committed.
-data/
+
 
 # Local-only: not part of the deployed site or the paper.
 README.md
