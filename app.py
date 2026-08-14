@@ -148,7 +148,7 @@ def build_avg_table(view):
 # ============================================================================
 # DASH APP  (layout + callbacks)
 # ============================================================================
-app = Dash(__name__, title="OCT – T₁ Correlation")
+app = Dash(__name__, title="OCT – T₁ Correlation",eager_loading=True)
 server = app.server                      # gunicorn entry point (Render)
 CORS(server, resources={r"/opticnerve/*": {"origins": "*"}})
 
