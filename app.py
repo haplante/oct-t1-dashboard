@@ -350,6 +350,7 @@ __BANDTOGGLE__
 
 _FIG_PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
+<link rel="icon" href="/assets/favicon.ico">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OCT-T1 __FIGID__</title>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
@@ -378,6 +379,7 @@ g.annotation rect{rx:6px;ry:6px}</style></head>
 # ---------------------------------------------------------------------------
 _CHIP_PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>reset</title>
+<link rel="icon" href="/assets/favicon.ico">
 <style>html,body{margin:0;height:100%;overflow:hidden;background:transparent;
   font:bold 11px Arial,Helvetica,sans-serif}
 /* The iframe is exactly the button's size and clips overflow, so the attention
